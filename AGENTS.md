@@ -151,6 +151,14 @@ coverage claims against actual pytest output, not summaries.
 
 This project's owner reads the actual code you write, not just your summary of it, and
 has caught real bugs this way (the `chr()` obfuscation in `_generate_comparison_notes`,
-the team_name/team_id desync, lineup-computed-before-moves). Prefer plain, readable code.
-If you hit a technical wall (like a shell quoting issue), say so and ask, rather than working
-around it in a way that makes the code harder to read or verify.
+the team_name/team_id desync, lineup-computed-before-moves, missing import in run_weekly.py).
+Prefer plain, readable code. If you hit a technical wall (like a shell quoting issue), say so
+and ask, rather than working around it in a way that makes the code harder to read or verify.
+
+**Passing unit tests does not guarantee the CLI entry point works.** After any change that
+adds or renames functions used in `run_weekly.py`, always:
+1. Add the new function to the `from decision_engine import (...)` block at the top of
+   `run_weekly.py` (line ~35).
+2. Run the script itself end-to-end at least once (`python run_weekly.py --dry-run`) after
+   changes, not just `pytest`. The tests mock out the entry point; the real script can still
+   crash with `NameError` if an import was forgotten.

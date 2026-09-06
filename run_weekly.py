@@ -38,6 +38,7 @@ from decision_engine import (
     recommend_adds_drops,
     recommend_lineup,
     build_action_plan,
+    check_upcoming_byes,
     RecommendationReport,
 )
 from report import build_terminal_report, build_markdown_report, save_markdown_report
