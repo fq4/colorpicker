@@ -110,6 +110,18 @@ unique per league/team/week so different runs never overwrite each other.
    simulated roster**, not the pre-move roster. This was also a deliberate fix for a real
    bug — don't let lineup calculation drift back to using the current roster when
    add/drop moves are pending.
+7. **Bye week lookahead is run every week and surfaced before the Action Plan.**
+   `check_upcoming_byes()` scans the next `lookahead_weeks` (default 2) for 0/null
+   projections and returns `ByeWeekWarning` objects. Starters are flagged as higher
+   priority than bench players. The report shows an "Upcoming Byes" section before
+   the Action Plan so forward-looking context doesn't get buried.
+8. **Streaming thresholds are position-specific, not a single global value.**
+   `min_vor_gain_to_recommend_add` in `config.yaml` is now a dict keyed by position
+   (QB/TE/K/DEF use a low bar ~1–2.0; RB/WR use a high bar ~8.0) with a `default`
+   fallback for any position not explicitly listed. `_assess_confidence()` and
+   `_build_add_drop_reason()` both read the position-specific value so reasoning text
+   and confidence stay aligned. Don't collapse this back to a single scalar — the
+   position distinction is a deliberate strategy choice.
 
 ## Automation / executor.py — investigated, deliberately NOT built
 
