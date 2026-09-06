@@ -1,0 +1,34 @@
+league_id: 492312
+team_id: 7
+team_name: "انتصاب يستمر ثلاث عشرة ساعة"   # for matching Owner column
+positions: "QB, WR, WR, RB, RB, TE, W/R, K, DEF, BN, BN, BN, BN, BN, BN, IR"
+is_idp: false
+scoring_type: "half-ppr"   # confirmed: league gives 0.5 pts per reception
+waiver_type: "continual_rolling"   # confirmed from league settings — not FAAB
+waiver_priority: 10   # update weekly as it changes
+season: 2026
+
+# thresholds the decision engine uses — tune over time
+min_vor_gain_to_recommend_add: 5.0
+min_vor_loss_to_flag_drop: -50.0
+min_usable_projection: 1.0
+bench_depth_minimums:
+  RB: 1
+  WR: 1
+  QB: 1
+  TE: 0
+
+# injury statuses that prevent a player from being used as bench depth
+ir_statuses:
+  - "IR"
+  - "IR-R"
+  - "NFI"
+  - "NFI-R"
+  - "NFI-A"
+  - "COVID"
+  - "PUP"
+  - "PUP-R"
+  - "O"
+
+notify:
+  method: "console"   # console | email | none (extend later)
