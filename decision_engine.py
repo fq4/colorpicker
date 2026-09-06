@@ -79,6 +79,19 @@ class BenchDepthWarning:
 
 
 @dataclass
+class RosterLimitWarning:
+    """A warning that recommended moves would exceed the roster size limit."""
+
+    current_size: int
+    max_size: int
+    excess: int
+    message: str
+    suggested_drops: list[dict] = field(default_factory=list)
+    ir_players: list[str] = field(default_factory=list)
+    low_proj_players: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ByeWeekWarning:
     """A warning about an upcoming bye week for a roster player."""
 
@@ -898,8 +911,8 @@ def recommend_lineup(
     )
 
     if ir_slot:
-        # Prepend IR slot to starters list (it's not actually a starter but shown for context)
-        pass  # IR slot is informational, not part of starters
+        # Add IR slot to bench so it appears in the bench table
+        bench_slots.append(ir_slot)
 
     return result
 
@@ -1042,6 +1055,45 @@ def build_action_plan(
     simulated = simulate_post_move_roster(
         df, my_roster, add_drop_recs, current_week
     )
+
+    # Check roster size limit
+    max_roster_size = len(parse_positions(positions_config["positions"]))
+    current_roster_size = len(my_roster)
+    net_moves = (
+        sum(1 for r in moves if r.add)
+        - sum(1 for r in moves if r.drop)
+    )
+    projected_size = current_roster_size + net_moves
+
+    roster_limit_warnings: list[RosterLimitWarning] = []
+    if projected_size > max_roster_size:
+        excess = projected_size - max_roster_size
+        # Identify lowest-VOR bench players in the CURRENT roster as drop candidates
+        bench_df = my_roster.copy()
+        week_col = _week_col(current_week)
+        bench_df["_vor"] = bench_df["VOR"].apply(lambda v: _safe_float(v) or 0.0)
+        bench_df = bench_df.sort_values(by="_vor", ascending=True)
+        suggested = []
+        for _, row in bench_df.head(excess).iterrows():
+            suggested.append({
+                "name": str(row["Name"]),
+                "position": str(row["Position"]),
+                "vor": _safe_float(row.get("VOR")),
+            })
+        roster_limit_warnings.append(
+            RosterLimitWarning(
+                current_size=current_roster_size,
+                max_size=max_roster_size,
+                excess=excess,
+                message=(
+                    f"Roster limit exceeded: {current_roster_size} current players + "
+                    f"{net_moves} net moves = {projected_size}, but max is {max_roster_size}. "
+                    f"Need {excess} additional drop(s) to fit."
+                ),
+                suggested_drops=suggested,
+            )
+        )
+
     final_lineup = recommend_lineup(
         df, simulated, positions_config, current_week
     )
@@ -1056,7 +1108,7 @@ def build_action_plan(
         skipped_recs=skipped,
         simulated_roster=simulated,
         final_lineup=final_lineup,
-        remaining_warnings=remaining_warnings,
+        remaining_warnings=remaining_warnings + roster_limit_warnings,
         comparison_notes=comparison_notes,
     )
 

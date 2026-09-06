@@ -23,8 +23,10 @@ from decision_engine import (
     recommend_adds_drops,
     recommend_lineup,
     simulate_post_move_roster,
+    build_action_plan,
     check_upcoming_byes,
     ByeWeekWarning,
+    RosterLimitWarning,
     build_action_plan,
     ActionPlan,
     AddDropRecommendation,
@@ -985,3 +987,100 @@ class TestPositionDifferentiatedThresholds:
         # All recs should have a valid confidence level
         for rec in recs:
             assert rec.confidence in ("high", "medium", "low")
+
+
+# --- Roster size limit enforcement ---
+
+
+class TestRosterSizeLimit:
+    def test_roster_limit_exceeded_surfaces_warning(self, mock_df, mock_config):
+        """When moves would exceed roster size, a RosterLimitWarning is raised."""
+        from run_weekly import build_positions_config
+        from decision_engine import AddDropRecommendation
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+
+        # Mock roster has 12 players; positions config has 16 slots
+        current_size = len(roster)
+        max_size = len(parse_positions(positions_config["positions"]))
+
+        # Create moves with net +5 (5 adds, 0 drops) -> 12 + 5 = 17 > 16
+        recs = [
+            AddDropRecommendation(action="fa_add", add="Player A"),
+            AddDropRecommendation(action="fa_add", add="Player B"),
+            AddDropRecommendation(action="fa_add", add="Player C"),
+            AddDropRecommendation(action="fa_add", add="Player D"),
+            AddDropRecommendation(action="fa_add", add="Player E"),
+        ]
+
+        action_plan = build_action_plan(
+            mock_df, roster, recs, positions_config, 3
+        )
+        # Should have a roster limit warning
+        roster_warnings = [w for w in action_plan.remaining_warnings
+                          if isinstance(w, RosterLimitWarning)]
+        assert len(roster_warnings) == 1
+        rlw = roster_warnings[0]
+        assert rlw.current_size == current_size
+        assert rlw.max_size == max_size
+        assert rlw.excess == current_size + 5 - max_size
+        assert "Roster limit exceeded" in rlw.message
+        assert len(rlw.suggested_drops) == rlw.excess
+
+    def test_roster_limit_not_exceeded_no_warning(self, mock_df, mock_config):
+        """When moves fit within roster size, no RosterLimitWarning."""
+        from run_weekly import build_positions_config
+        from decision_engine import AddDropRecommendation
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+
+        # Net 0 moves: 1 add + 1 drop
+        recs = [
+            AddDropRecommendation(action="add_drop", drop="Player A", add="Player B"),
+        ]
+        action_plan = build_action_plan(
+            mock_df, roster, recs, positions_config, 3
+        )
+        roster_warnings = [w for w in action_plan.remaining_warnings
+                          if isinstance(w, RosterLimitWarning)]
+        assert len(roster_warnings) == 0
+
+
+# --- IR player appears in bench table ---
+
+
+class TestIRPlayerInBench:
+    def test_ir_player_appears_in_bench_table(self, mock_df, mock_config):
+        """IR players should appear in the bench table, not disappear."""
+        from run_weekly import build_positions_config
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+
+        # Robbie Ouzts is on IR in the mock data
+        ir_players = roster[roster["Status"].apply(lambda s: str(s).strip() in ("IR", "IR-R"))]
+        assert len(ir_players) == 1
+        assert "Robbie Ouzts" in ir_players["Name"].values
+
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        # IR player should be in bench, not missing
+        bench_names = [s.player for s in lineup.bench]
+        assert "Robbie Ouzts" in bench_names, f"IR player missing from bench. Bench: {bench_names}"
+
+        # IR player should have slot="IR"
+        ir_slot = [s for s in lineup.bench if s.player == "Robbie Ouzts"]
+        assert len(ir_slot) == 1
+        assert ir_slot[0].slot == "IR"
+
+    def test_ir_player_in_action_plan_bench(self, mock_df, mock_config):
+        """IR player should appear in the action plan bench table."""
+        from run_weekly import build_positions_config
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+
+        action_plan = build_action_plan(
+            mock_df, roster, [], positions_config, 3
+        )
+        assert action_plan.final_lineup is not None
+        bench_names = [s.player for s in action_plan.final_lineup.bench]
+        assert "Robbie Ouzts" in bench_names
