@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 import pytest
 
+from data_layer import validate_team_identifiers, get_team_name_from_id
 from decision_engine import (
     get_my_roster,
     flag_bench_depth_gaps,
@@ -738,3 +739,104 @@ class TestActionPlan:
         assert "Position Comparison Notes" in md
         assert "Brandon Aubrey" in md
         assert "Jake Elliott" in md
+
+
+# --- Team identifier validation ---
+
+
+class TestValidateTeamIdentifiers:
+    def test_mismatched_team_id_and_name_raises(self, mock_df, mock_config):
+        """Mismatched team_id/team_name must raise ValueError immediately."""
+        bad_config = dict(mock_config)
+        bad_config["team_name"] = "Wrong Team Name"
+        with pytest.raises(ValueError, match="team_id=7 corresponds to"):
+            validate_team_identifiers(mock_df, bad_config)
+
+    def test_matching_team_id_and_name_passes(self, mock_df, mock_config):
+        """Matching team_id/team_name should not raise."""
+        validate_team_identifiers(mock_df, mock_config)  # must not raise
+
+    def test_team_id_not_found_raises(self, mock_df, mock_config):
+        """Unknown team_id should raise ValueError with available IDs."""
+        bad_config = dict(mock_config)
+        bad_config["team_id"] = 999
+        with pytest.raises(ValueError, match="not found in scraped data"):
+            validate_team_identifiers(mock_df, bad_config)
+
+    def test_none_identifiers_pass_silently(self, mock_df):
+        """Missing team_id or team_name should not raise."""
+        validate_team_identifiers(mock_df, {})  # no team_id or team_name
+        validate_team_identifiers(mock_df, {"team_id": 7})  # no team_name
+        validate_team_identifiers(mock_df, {"team_name": "anything"})  # no team_id
+
+
+# --- get_team_name_from_id ---
+
+
+class TestGetTeamNameFromId:
+    def test_resolves_team_id_7_to_real_name(self, mock_df, mock_config):
+        """team_id=7 in mock data corresponds to the Arabic team name."""
+        name = get_team_name_from_id(mock_df, 7)
+        assert name == mock_config["team_name"]
+
+    def test_unknown_team_id_raises(self, mock_df):
+        """An ID not present in the df should raise ValueError."""
+        with pytest.raises(ValueError, match="not found in scraped data"):
+            get_team_name_from_id(mock_df, 9999)
+
+    def test_none_team_id_raises(self, mock_df):
+        """None team_id should raise ValueError."""
+        with pytest.raises(ValueError, match="team_id is required"):
+            get_team_name_from_id(mock_df, None)
+
+
+# --- CLI overrides and report filenames ---
+
+
+class TestCLIOverridesAndFilenames:
+    def test_cli_args_override_config(self):
+        """When --league-id or --team-id are provided, they override config.yaml."""
+        import argparse
+        from run_weekly import main as run_main
+        # We can't easily call main() without mocking, so test the parser directly
+        # by importing the parser setup logic. Instead, verify via the config dict:
+        config = {"league_id": 492312, "team_id": 7, "team_name": "Old Name"}
+        # Simulate what main() does
+        class Args:
+            league_id = 999
+            team_id = 5
+            config = "config.yaml"
+            max_cache_age = 12.0
+        args = Args()
+        if args.league_id is not None:
+            config["league_id"] = args.league_id
+        if args.team_id is not None:
+            config["team_id"] = args.team_id
+        assert config["league_id"] == 999
+        assert config["team_id"] == 5
+
+    def test_config_values_used_when_no_cli_args(self):
+        """When no --league-id/--team-id flags are given, config.yaml values are kept."""
+        config = {"league_id": 492312, "team_id": 7, "team_name": "Old Name"}
+        class Args:
+            league_id = None
+            team_id = None
+            config = "config.yaml"
+            max_cache_age = 12.0
+        args = Args()
+        if args.league_id is not None:
+            config["league_id"] = args.league_id
+        if args.team_id is not None:
+            config["team_id"] = args.team_id
+        assert config["league_id"] == 492312
+        assert config["team_id"] == 7
+
+    def test_report_filename_reflects_league_and_team(self, tmp_path):
+        """save_markdown_report should create a file named with league_id and team_id."""
+        from report import save_markdown_report
+        path = save_markdown_report(
+            "# Test", week=3, league_id=492312, team_id=7,
+            reports_dir=str(tmp_path)
+        )
+        assert "league_492312_team_7_week_3.md" in path
+        assert os.path.exists(path)

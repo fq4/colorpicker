@@ -358,7 +358,8 @@ def build_markdown_report(
     # 6. Season-long tracking note
     lines.append("## Tracking")
     lines.append("")
-    lines.append(f"This report is saved as `reports/week_{current_week}.md` for season-long accuracy tracking.")
+    filename = f"league_{config.get('league_id', 'N/A')}_team_{config.get('team_id', 'N/A')}_week_{current_week}.md"
+    lines.append(f"This report is saved as `reports/{filename}` for season-long accuracy tracking.")
     lines.append("")
 
     return "\n".join(lines)
@@ -433,10 +434,10 @@ def _md_float(val, signed: bool = False) -> str:
 # ── Save ──────────────────────────────────────────────────────────────────
 
 
-def save_markdown_report(content: str, week: int, reports_dir: str = REPORTS_DIR) -> str:
-    """Write the markdown report to reports/week_{n}.md."""
+def save_markdown_report(content: str, week: int, league_id: int, team_id: int, reports_dir: str = REPORTS_DIR) -> str:
+    """Write the markdown report to reports/league_{league_id}_team_{team_id}_week_{n}.md."""
     os.makedirs(reports_dir, exist_ok=True)
-    path = os.path.join(reports_dir, f"week_{week}.md")
+    path = os.path.join(reports_dir, f"league_{league_id}_team_{team_id}_week_{week}.md")
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     logger.info(f"Report saved to {path}")
@@ -447,10 +448,12 @@ def save_both(
     terminal_report: str,
     markdown_report: str,
     week: int,
+    league_id: int,
+    team_id: int,
     reports_dir: str = REPORTS_DIR,
 ) -> str:
     """Save only the markdown version; the terminal version is printed to stdout."""
-    return save_markdown_report(markdown_report, week, reports_dir)
+    return save_markdown_report(markdown_report, week, league_id, team_id, reports_dir)
 
 
 # ── Action Plan formatting ──────────────────────────────────────────────
