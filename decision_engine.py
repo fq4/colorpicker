@@ -1068,28 +1068,62 @@ def build_action_plan(
     roster_limit_warnings: list[RosterLimitWarning] = []
     if projected_size > max_roster_size:
         excess = projected_size - max_roster_size
-        # Identify lowest-VOR bench players in the CURRENT roster as drop candidates
+        # Build set of starter names from the original lineup so we never
+        # suggest dropping a current starter
+        starter_names: set[str] = set()
+        if original_lineup is not None:
+            starter_names = {s.player for s in original_lineup.starters}
+
+        # Also collect IR-status player names from the current roster
+        ir_statuses = _parse_ir_statuses(positions_config)
+        ir_names = set()
+        for _, row in my_roster.iterrows():
+            if _is_ir(row.get("Status"), ir_statuses):
+                ir_names.add(str(row.get("Name", "")))
+
+        # Identify lowest-VOR bench players in the CURRENT roster as drop candidates,
+        # excluding starters and IR-status players
         bench_df = my_roster.copy()
         week_col = _week_col(current_week)
         bench_df["_vor"] = bench_df["VOR"].apply(lambda v: _safe_float(v) or 0.0)
         bench_df = bench_df.sort_values(by="_vor", ascending=True)
         suggested = []
-        for _, row in bench_df.head(excess).iterrows():
+        for _, row in bench_df.iterrows():
+            name = str(row.get("Name", ""))
+            if name in starter_names or name in ir_names:
+                continue
             suggested.append({
-                "name": str(row["Name"]),
-                "position": str(row["Position"]),
+                "name": name,
+                "position": str(row.get("Position", "")),
                 "vor": _safe_float(row.get("VOR")),
             })
+            if len(suggested) >= excess:
+                break
+
+        if suggested:
+            drop_names = ", ".join(
+                f"{d['name']} ({d['position']})" for d in suggested
+            )
+            message = (
+                f"Roster limit exceeded: {current_roster_size} current players + "
+                f"{net_moves} net moves = {projected_size}, but max is {max_roster_size}. "
+                f"Need {excess} additional drop(s) to fit. "
+                f"Suggested: {drop_names}."
+            )
+        else:
+            message = (
+                f"Roster limit exceeded: {current_roster_size} current players + "
+                f"{net_moves} net moves = {projected_size}, but max is {max_roster_size}. "
+                f"Need {excess} additional drop(s) to fit, but no bench players "
+                f"are available to drop."
+            )
+
         roster_limit_warnings.append(
             RosterLimitWarning(
                 current_size=current_roster_size,
                 max_size=max_roster_size,
                 excess=excess,
-                message=(
-                    f"Roster limit exceeded: {current_roster_size} current players + "
-                    f"{net_moves} net moves = {projected_size}, but max is {max_roster_size}. "
-                    f"Need {excess} additional drop(s) to fit."
-                ),
+                message=message,
                 suggested_drops=suggested,
             )
         )

@@ -20,6 +20,7 @@ from decision_engine import (
     RecommendationReport,
     BenchDepthWarning,
     ByeWeekWarning,
+    RosterLimitWarning,
 )
 
 REPORTS_DIR = "reports"
@@ -573,7 +574,15 @@ def _format_action_plan_terminal(plan: ActionPlan, week: int) -> str:
         lines.append("### Remaining Warnings")
         lines.append("")
         for w in plan.remaining_warnings:
-            lines.append(f"  - {w.message}")
+            if isinstance(w, RosterLimitWarning):
+                lines.append(f"  - {w.message}")
+                for d in w.suggested_drops:
+                    vor_str = f"{d['vor']:+.1f}" if d.get("vor") is not None else "N/A"
+                    lines.append(f"    - {d['name']} ({d['position']}) — VOR {vor_str}")
+            else:
+                lines.append(f"  - {w.message}")
+                if getattr(w, "ir_players", None):
+                    lines.append(f"    - IR players: {', '.join(w.ir_players)}")
         lines.append("")
 
     return "\n".join(lines)
@@ -671,9 +680,15 @@ def _md_action_plan(plan: ActionPlan, week: int) -> str:
         lines.append("### Remaining Warnings")
         lines.append("")
         for w in plan.remaining_warnings:
-            lines.append(f"- {w.message}")
-            if w.ir_players:
-                lines.append(f"  - IR players: {', '.join(w.ir_players)}")
+            if isinstance(w, RosterLimitWarning):
+                lines.append(f"- {w.message}")
+                for d in w.suggested_drops:
+                    vor_str = f"{d['vor']:+.1f}" if d.get("vor") is not None else "N/A"
+                    lines.append(f"  - {d['name']} ({d['position']}) — VOR {vor_str}")
+            else:
+                lines.append(f"- {w.message}")
+                if getattr(w, "ir_players", None):
+                    lines.append(f"  - IR players: {', '.join(w.ir_players)}")
         lines.append("")
 
     return "\n".join(lines)

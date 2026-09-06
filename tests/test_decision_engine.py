@@ -1084,3 +1084,142 @@ class TestIRPlayerInBench:
         assert action_plan.final_lineup is not None
         bench_names = [s.player for s in action_plan.final_lineup.bench]
         assert "Robbie Ouzts" in bench_names
+
+
+# --- Roster limit: starter/IR exclusion ---
+
+
+class TestRosterLimitExcludesStartersAndIR:
+    def test_suggested_drops_exclude_starters(self, mock_df, mock_config):
+        """Lowest-VOR starters must not appear in suggested_drops."""
+        from run_weekly import build_positions_config
+        from decision_engine import (
+            AddDropRecommendation, build_action_plan, recommend_lineup,
+            RosterLimitWarning,
+        )
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        # Net +5 moves to force limit exceed
+        recs = [
+            AddDropRecommendation(action="fa_add", add="Player A"),
+            AddDropRecommendation(action="fa_add", add="Player B"),
+            AddDropRecommendation(action="fa_add", add="Player C"),
+            AddDropRecommendation(action="fa_add", add="Player D"),
+            AddDropRecommendation(action="fa_add", add="Player E"),
+        ]
+
+        action_plan = build_action_plan(
+            mock_df, roster, recs, positions_config, 3, original_lineup=lineup
+        )
+        roster_warnings = [w for w in action_plan.remaining_warnings
+                          if isinstance(w, RosterLimitWarning)]
+        assert len(roster_warnings) == 1
+        rlw = roster_warnings[0]
+        starter_names = {s.player for s in lineup.starters}
+        for d in rlw.suggested_drops:
+            assert d["name"] not in starter_names, (
+                f"Starter {d['name']} should not be in suggested drops"
+            )
+
+    def test_suggested_drops_exclude_ir_players(self, mock_df, mock_config):
+        """IR-status players must not appear in suggested_drops."""
+        from run_weekly import build_positions_config
+        from decision_engine import (
+            AddDropRecommendation, build_action_plan, recommend_lineup,
+            RosterLimitWarning, _parse_ir_statuses,
+        )
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+        ir_statuses = _parse_ir_statuses(positions_config)
+
+        # Net +5 moves to force limit exceed
+        recs = [
+            AddDropRecommendation(action="fa_add", add="Player A"),
+            AddDropRecommendation(action="fa_add", add="Player B"),
+            AddDropRecommendation(action="fa_add", add="Player C"),
+            AddDropRecommendation(action="fa_add", add="Player D"),
+            AddDropRecommendation(action="fa_add", add="Player E"),
+        ]
+
+        action_plan = build_action_plan(
+            mock_df, roster, recs, positions_config, 3, original_lineup=lineup
+        )
+        roster_warnings = [w for w in action_plan.remaining_warnings
+                          if isinstance(w, RosterLimitWarning)]
+        assert len(roster_warnings) == 1
+        rlw = roster_warnings[0]
+        ir_names = set()
+        for _, row in roster.iterrows():
+            if _is_ir(row.get("Status"), ir_statuses):
+                ir_names.add(str(row.get("Name", "")))
+        for d in rlw.suggested_drops:
+            assert d["name"] not in ir_names, (
+                f"IR player {d['name']} should not be in suggested drops"
+            )
+
+    def test_suggested_drops_rendered_in_terminal_report(self, mock_df, mock_config):
+        """RosterLimitWarning suggested drops should appear in terminal output."""
+        from run_weekly import build_positions_config
+        from decision_engine import (
+            AddDropRecommendation, build_action_plan, recommend_lineup,
+        )
+        from report import _format_action_plan_terminal
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        recs = [
+            AddDropRecommendation(action="fa_add", add="Player A"),
+            AddDropRecommendation(action="fa_add", add="Player B"),
+            AddDropRecommendation(action="fa_add", add="Player C"),
+            AddDropRecommendation(action="fa_add", add="Player D"),
+            AddDropRecommendation(action="fa_add", add="Player E"),
+        ]
+
+        action_plan = build_action_plan(
+            mock_df, roster, recs, positions_config, 3, original_lineup=lineup
+        )
+        terminal = _format_action_plan_terminal(action_plan, 3)
+        # Suggested drops appear as sub-bullets under the roster limit warning
+        has_drop = any(
+            d["name"] in terminal
+            for w in action_plan.remaining_warnings
+            if isinstance(w, RosterLimitWarning)
+            for d in w.suggested_drops
+        )
+        assert has_drop, "No suggested drop names found in terminal report"
+
+    def test_suggested_drops_rendered_in_markdown_report(self, mock_df, mock_config):
+        """RosterLimitWarning suggested drops should appear in markdown output."""
+        from run_weekly import build_positions_config
+        from decision_engine import (
+            AddDropRecommendation, build_action_plan, recommend_lineup,
+        )
+        from report import _md_action_plan
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        recs = [
+            AddDropRecommendation(action="fa_add", add="Player A"),
+            AddDropRecommendation(action="fa_add", add="Player B"),
+            AddDropRecommendation(action="fa_add", add="Player C"),
+            AddDropRecommendation(action="fa_add", add="Player D"),
+            AddDropRecommendation(action="fa_add", add="Player E"),
+        ]
+
+        action_plan = build_action_plan(
+            mock_df, roster, recs, positions_config, 3, original_lineup=lineup
+        )
+        md = _md_action_plan(action_plan, 3)
+        # Suggested drops appear as sub-bullets under the roster limit warning
+        has_drop = any(
+            d["name"] in md
+            for w in action_plan.remaining_warnings
+            if isinstance(w, RosterLimitWarning)
+            for d in w.suggested_drops
+        )
+        assert has_drop, "No suggested drop names found in markdown report"
