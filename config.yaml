@@ -1,6 +1,7 @@
 league_id: 492312
-team_id: 7
-team_name: "انتصاب يستمر ثلاث عشرة ساعة"   # for matching Owner column
+team_id: 1
+# team_name is derived from team_id at runtime via the scraped df
+# (no need to maintain it here — removing to avoid desync)
 positions: "QB, WR, WR, RB, RB, TE, W/R, K, DEF, BN, BN, BN, BN, BN, BN, IR"
 is_idp: false
 scoring_type: "half-ppr"   # confirmed: league gives 0.5 pts per reception

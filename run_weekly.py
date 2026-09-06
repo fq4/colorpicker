@@ -111,8 +111,21 @@ def run_weekly(config: dict, week: int | None = None, force_refresh: bool = Fals
     # Ensure expected columns exist
     df = ensure_data_columns(df)
 
+    # 1.5 Derive team_name from team_id via the scraped data
+    from data_layer import get_team_name_from_id
+    team_name = get_team_name_from_id(df, config["team_id"])
+    config["team_name"] = team_name  # inject so all downstream readers stay in sync
+
+    # Print resolved identity banner
+    print()
+    print("=" * 60)
+    print(f"  League ID : {config['league_id']}")
+    print(f"  Team ID   : {config['team_id']}")
+    print(f"  Team Name : {team_name}")
+    print("=" * 60)
+    print()
+
     # 2. Roster
-    team_name = config["team_name"]
     my_roster = get_my_roster(df, team_name, current_week)
     logger.info(f"Roster: {len(my_roster)} players for '{team_name}'")
 
@@ -181,6 +194,16 @@ def main():
         dest="max_cache_age",
         help="Max cache age in hours before re-scraping (default: 12)"
     )
+    parser.add_argument(
+        "--league-id", type=int, default=None,
+        dest="league_id",
+        help="Override league_id from config.yaml for this run"
+    )
+    parser.add_argument(
+        "--team-id", type=int, default=None,
+        dest="team_id",
+        help="Override team_id from config.yaml for this run"
+    )
     args = parser.parse_args()
 
     dry_run = args.dry_run or not args.execute
@@ -190,7 +213,13 @@ def main():
     config = load_config(args.config)
     config["cache_max_age_hours"] = args.max_cache_age
 
-    # Run pipeline
+    # Apply CLI overrides (config.yaml remains the default when flags are omitted)
+    if args.league_id is not None:
+        config["league_id"] = args.league_id
+    if args.team_id is not None:
+        config["team_id"] = args.team_id
+
+    # Run pipeline (run_weekly will derive team_name from team_id via the df)
     report = run_weekly(config, week=args.week, force_refresh=args.force_refresh)
 
     # Get the actual week used
@@ -207,7 +236,11 @@ def main():
     md_report = build_markdown_report(
         report, actual_week, config.get("season", 2026), config, dry_run=dry_run
     )
-    save_markdown_report(md_report, actual_week)
+    save_markdown_report(
+        md_report, actual_week,
+        league_id=config["league_id"],
+        team_id=config["team_id"],
+    )
 
     # Execute (only if --execute)
     if not dry_run and report.add_drop_recs:
