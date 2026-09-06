@@ -19,6 +19,7 @@ from decision_engine import (
     LineupSlot,
     RecommendationReport,
     BenchDepthWarning,
+    ByeWeekWarning,
 )
 
 REPORTS_DIR = "reports"
@@ -132,7 +133,15 @@ def build_terminal_report(
             lines.append(f"  ⚠️ {w.message}")
         lines.append("")
 
-    # 5. Action Plan (terminal)
+    # 5. Upcoming Byes
+    if report.bye_week_warnings:
+        lines.append("--- Upcoming Byes ---")
+        lines.append("")
+        for w in report.bye_week_warnings:
+            lines.append(f"  {w.message}")
+        lines.append("")
+
+    # 6. Action Plan (terminal)
     if report.action_plan is not None:
         lines.append(_format_action_plan_terminal(report.action_plan, current_week))
         lines.append("")
@@ -348,7 +357,17 @@ def build_markdown_report(
         lines.append("No bench depth warnings.")
         lines.append("")
 
-    # 5. Action Plan (markdown)
+    # 5. Upcoming Byes
+    if report.bye_week_warnings:
+        lines.append("## Upcoming Byes")
+        lines.append("")
+        lines.append("Players with bye weeks in the coming weeks:")
+        lines.append("")
+        for w in report.bye_week_warnings:
+            lines.append(f"- {w.message}")
+        lines.append("")
+
+    # 6. Action Plan (markdown)
     if report.action_plan is not None:
         lines.append(_md_action_plan(report.action_plan, current_week))
         lines.append("")

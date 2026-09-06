@@ -153,9 +153,15 @@ def run_weekly(config: dict, week: int | None = None, force_refresh: bool = Fals
         df, my_roster, add_drop_recs, positions_config, current_week, original_lineup=lineup
     )
 
+    # Check upcoming bye weeks
+    bye_week_warnings = check_upcoming_byes(my_roster, current_week, lineup=lineup)
+    for w in bye_week_warnings:
+        logger.warning(f"Bye week: {w.message}")
+
     report = RecommendationReport(
         my_roster=my_roster,
         depth_warnings=depth_warnings,
+        bye_week_warnings=bye_week_warnings,
         lineup=lineup,
         add_drop_recs=add_drop_recs,
         low_value_recs=low_value,

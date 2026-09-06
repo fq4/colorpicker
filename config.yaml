@@ -10,7 +10,13 @@ waiver_priority: 10   # update weekly as it changes
 season: 2026
 
 # thresholds the decision engine uses — tune over time
-min_vor_gain_to_recommend_add: 5.0
+min_vor_gain_to_recommend_add:
+  QB: 2.0
+  TE: 2.0
+  K: 1.0
+  DEF: 1.0
+  RB: 8.0
+  WR: 8.0
 min_vor_loss_to_flag_drop: -50.0
 min_usable_projection: 1.0
 bench_depth_minimums:

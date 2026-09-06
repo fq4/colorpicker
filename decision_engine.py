@@ -79,6 +79,17 @@ class BenchDepthWarning:
 
 
 @dataclass
+class ByeWeekWarning:
+    """A warning about an upcoming bye week for a roster player."""
+
+    player: str
+    position: str
+    bye_week: int
+    is_current_starter: bool
+    message: str
+
+
+@dataclass
 class LineupRecommendation:
     """Full lineup recommendation returned by recommend_lineup()."""
 
@@ -107,6 +118,7 @@ class RecommendationReport:
 
     my_roster: Optional[pd.DataFrame] = None
     depth_warnings: list[BenchDepthWarning] = field(default_factory=list)
+    bye_week_warnings: list[ByeWeekWarning] = field(default_factory=list)
     lineup: Optional[LineupRecommendation] = None
     add_drop_recs: list[AddDropRecommendation] = field(default_factory=list)
     low_value_recs: list[AddDropRecommendation] = field(default_factory=list)
@@ -313,6 +325,67 @@ def flag_bench_depth_gaps(
     return warnings
 
 
+def check_upcoming_byes(
+    my_roster: pd.DataFrame,
+    current_week: int,
+    lookahead_weeks: int = 2,
+    lineup: Optional[LineupRecommendation] = None,
+) -> list[ByeWeekWarning]:
+    """Flag players with upcoming bye weeks within the lookahead window.
+
+    A bye week is detected when a player has a 0 or null projection for a week
+    sandwiched between normal projections.  Starters are flagged as higher
+    priority than bench players.
+    """
+    warnings: list[ByeWeekWarning] = []
+    if my_roster is None or my_roster.empty:
+        return warnings
+
+    # Build set of starter names for cross-referencing
+    starter_names: set[str] = set()
+    if lineup is not None:
+        starter_names = {s.player for s in lineup.starters}
+
+    week_cols = []
+    for w in range(current_week + 1, current_week + lookahead_weeks + 1):
+        col = f"Week {w}"
+        if col in my_roster.columns:
+            week_cols.append((w, col))
+
+    for _, row in my_roster.iterrows():
+        player_name = str(row.get("Name", ""))
+        player_pos = str(row.get("Position", ""))
+        bye_week = None
+
+        for week_num, col in week_cols:
+            val = row.get(col)
+            proj = _safe_float(val)
+            if proj is None or proj == 0:
+                bye_week = week_num
+                break
+
+        if bye_week is None:
+            continue
+
+        is_starter = player_name in starter_names
+        priority = "starter" if is_starter else "bench"
+        message = (
+            f"{player_name} ({player_pos}, {priority}) has a bye in Week {bye_week}"
+            f" — plan a replacement before then."
+        )
+        warnings.append(
+            ByeWeekWarning(
+                player=player_name,
+                position=player_pos,
+                bye_week=bye_week,
+                is_current_starter=is_starter,
+                message=message,
+            )
+        )
+
+    return warnings
+
+
 # --------------------------------------------------------------------------- #
 #  3. rank_free_agents                                                        #
 # --------------------------------------------------------------------------- #
@@ -437,7 +510,12 @@ def recommend_adds_drops(
     league_id = config["league_id"]
     team_id = config["team_id"]
     positions_str = config["positions"]
-    min_vor_add = config.get("min_vor_gain_to_recommend_add", 5.0)
+    min_vor_add_config = config.get("min_vor_gain_to_recommend_add", 5.0)
+    if isinstance(min_vor_add_config, dict):
+        min_vor_add_default = float(min_vor_add_config.get("default", 5.0))
+    else:
+        min_vor_add_default = float(min_vor_add_config)
+        min_vor_add_config = {}
     positions_config = {
         "positions": positions_str,
         "bench_depth_minimums": config.get("bench_depth_minimums", {}),
@@ -553,11 +631,15 @@ def recommend_adds_drops(
             ).strip(" |")
 
         # --- Build plain-English reason ---
-        rec.reason = _build_add_drop_reason(rec, current_week, week_col, depth_gap_positions)
+        rec.reason = _build_add_drop_reason(
+            rec, current_week, week_col, depth_gap_positions,
+            min_vor_add_default=min_vor_add_default,
+            min_vor_add_config=min_vor_add_config,
+        )
 
         # --- Confidence ---
         rec.confidence = _assess_confidence(
-            rec, min_vor_add, ir_statuses, depth_gap_positions
+            rec, min_vor_add_default, min_vor_add_config, ir_statuses, depth_gap_positions
         )
 
         recs.append(rec)
@@ -588,6 +670,8 @@ def _build_add_drop_reason(
     current_week: int,
     week_col: str,
     depth_gap_positions: set[str],
+    min_vor_add_default: float = 5.0,
+    min_vor_add_config: Optional[dict] = None,
 ) -> str:
     """Build a plain-English reason string for an add/drop recommendation."""
     parts: list[str] = []
@@ -613,9 +697,17 @@ def _build_add_drop_reason(
     if rec.add_projection is not None:
         parts.append(f"WK{current_week} proj {rec.add_projection:.1f} pts")
 
-    # VOR / gain
+    # VOR / gain and streaming threshold
     if rec.vor_gain is not None and rec.vor_gain != 0:
-        parts.append(f"VOR gain {rec.vor_gain:+.1f}")
+        position = (rec.add_position or "").strip().upper()
+        threshold = float((min_vor_add_config or {}).get(position, min_vor_add_default))
+        if position and min_vor_add_config:
+            parts.append(
+                f"VOR gain {rec.vor_gain:+.1f} clears the streaming threshold "
+                f"({threshold:.1f}) for {position}"
+            )
+        else:
+            parts.append(f"VOR gain {rec.vor_gain:+.1f}")
 
     # Depth gap fill
     if rec.add_position and rec.add_position in depth_gap_positions:
@@ -630,7 +722,8 @@ def _build_add_drop_reason(
 
 def _assess_confidence(
     rec: AddDropRecommendation,
-    min_vor_add: float,
+    min_vor_add_default: float,
+    min_vor_add_config: dict,
     ir_statuses: set[str],
     depth_gap_positions: set[str],
 ) -> str:
@@ -638,6 +731,10 @@ def _assess_confidence(
     # Low confidence if flagged
     if rec.flagged:
         return "low"
+
+    # Look up position-specific threshold
+    position = (rec.add_position or "").strip().upper()
+    min_vor_add = float(min_vor_add_config.get(position, min_vor_add_default))
 
     # High confidence if VOR gain is substantial and no flags
     if rec.vor_gain is not None and rec.vor_gain >= min_vor_add:
