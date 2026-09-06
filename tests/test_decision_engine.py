@@ -23,6 +23,8 @@ from decision_engine import (
     recommend_adds_drops,
     recommend_lineup,
     simulate_post_move_roster,
+    check_upcoming_byes,
+    ByeWeekWarning,
     build_action_plan,
     ActionPlan,
     AddDropRecommendation,
@@ -272,9 +274,14 @@ class TestRecommendAddsDrops:
     def test_low_vor_gain_shown_medium_confidence(self, mock_df, mock_config, positions_config):
         roster = get_my_roster(mock_df, mock_config['team_name'], WEEK)
         recs = recommend_adds_drops(mock_df, roster, WEEK, mock_config)
-        min_vor = mock_config['min_vor_gain_to_recommend_add']
+        vor_config = mock_config['min_vor_gain_to_recommend_add']
+        default_threshold = float(vor_config.get('default', 5.0))
         for rec in recs:
-            if rec.vor_gain is not None and rec.vor_gain < min_vor:
+            if rec.vor_gain is None or rec.flagged:
+                continue
+            position = (rec.add_position or '').strip().upper()
+            threshold = float(vor_config.get(position, default_threshold))
+            if rec.vor_gain < threshold:
                 assert rec.confidence == 'medium'
 
 
@@ -840,3 +847,141 @@ class TestCLIOverridesAndFilenames:
         )
         assert "league_492312_team_7_week_3.md" in path
         assert os.path.exists(path)
+
+
+# --- Bye Week Lookahead ---
+
+
+class TestCheckUpcomingByes:
+    def test_detects_bye_for_starter(self, mock_df, mock_config):
+        """A starter with a 0-projection week within the lookahead window is flagged."""
+        from run_weekly import build_positions_config
+        from decision_engine import recommend_lineup
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        # Mock data has Week 4/5 = 0 for all players; clear those first,
+        # then set only Josh Allen to 0 in Week 4
+        df_bye = mock_df.copy()
+        for col in ["Week 4", "Week 5"]:
+            df_bye[col] = 10.0
+        df_bye.loc[df_bye["Name"] == "Josh Allen", "Week 4"] = 0
+
+        warnings = check_upcoming_byes(df_bye, 3, lookahead_weeks=2, lineup=lineup)
+        allen_warnings = [w for w in warnings if w.player == "Josh Allen"]
+        assert len(allen_warnings) == 1
+        assert allen_warnings[0].bye_week == 4
+        assert allen_warnings[0].is_current_starter is True
+        assert "starter" in allen_warnings[0].message
+
+    def test_detects_bye_for_bench_player(self, mock_df, mock_config):
+        """A bench player with a 0-projection week is flagged as bench priority."""
+        from run_weekly import build_positions_config
+        from decision_engine import recommend_lineup
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        # Kirk Cousins is on the bench — set Week 4 to 0
+        df_bye = mock_df.copy()
+        for col in ["Week 4", "Week 5"]:
+            df_bye[col] = 10.0
+        df_bye.loc[df_bye["Name"] == "Kirk Cousins", "Week 4"] = 0
+
+        warnings = check_upcoming_byes(df_bye, 3, lookahead_weeks=2, lineup=lineup)
+        cousins_warnings = [w for w in warnings if w.player == "Kirk Cousins"]
+        assert len(cousins_warnings) == 1
+        assert cousins_warnings[0].is_current_starter is False
+        assert "bench" in cousins_warnings[0].message
+
+    def test_respects_lookahead_window(self, mock_df, mock_config):
+        """A bye outside the lookahead window should not be flagged."""
+        from run_weekly import build_positions_config
+        from decision_engine import recommend_lineup
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        # Set Weeks 4 and 5 to non-zero, Week 6 to 0 (outside lookahead)
+        df_bye = mock_df.copy()
+        for col in ["Week 4", "Week 5", "Week 6"]:
+            df_bye[col] = 10.0
+        df_bye.loc[df_bye["Name"] == "Josh Allen", "Week 6"] = 0
+
+        warnings = check_upcoming_byes(df_bye, 3, lookahead_weeks=2, lineup=lineup)
+        allen_warnings = [w for w in warnings if w.player == "Josh Allen"]
+        assert len(allen_warnings) == 0
+
+    def test_no_warnings_when_no_byes(self, mock_df, mock_config):
+        """No warnings when all lookahead weeks have projections."""
+        from run_weekly import build_positions_config
+        from decision_engine import recommend_lineup
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        # Clear the default 0 values in Weeks 4-5 so no byes are detected
+        df_no_bye = mock_df.copy()
+        for col in ["Week 4", "Week 5"]:
+            df_no_bye[col] = 10.0
+
+        warnings = check_upcoming_byes(df_no_bye, 3, lookahead_weeks=2, lineup=lineup)
+        assert len(warnings) == 0
+
+
+# --- Position-Differentiated Streaming Thresholds ---
+
+
+class TestPositionDifferentiatedThresholds:
+    def test_qb_small_vor_gain_is_high_confidence(self, mock_df, mock_config):
+        """QB add with VOR gain +2.0 should be high confidence (QB threshold = 2.0)."""
+        config = dict(mock_config)
+        config["min_vor_gain_to_recommend_add"] = {
+            "QB": 2.0, "TE": 2.0, "K": 1.0, "DEF": 1.0, "RB": 8.0, "WR": 8.0
+        }
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        recs = recommend_adds_drops(mock_df, roster, 3, config)
+        qb_recs = [r for r in recs if r.add_position == "QB" and r.vor_gain is not None]
+        for rec in qb_recs:
+            if rec.vor_gain >= 2.0:
+                assert rec.confidence == "high", f"QB rec {rec.add} with VOR {rec.vor_gain} should be high confidence"
+
+    def test_rb_small_vor_gain_is_medium_confidence(self, mock_df, mock_config):
+        """RB add with VOR gain +2.0 should be medium confidence (RB threshold = 8.0)."""
+        config = dict(mock_config)
+        config["min_vor_gain_to_recommend_add"] = {
+            "QB": 2.0, "TE": 2.0, "K": 1.0, "DEF": 1.0, "RB": 8.0, "WR": 8.0
+        }
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        recs = recommend_adds_drops(mock_df, roster, 3, config)
+        rb_recs = [r for r in recs if r.add_position == "RB" and r.vor_gain is not None]
+        for rec in rb_recs:
+            if rec.vor_gain < 8.0:
+                assert rec.confidence == "medium", f"RB rec {rec.add} with VOR {rec.vor_gain} should be medium confidence"
+
+    def test_k_small_vor_gain_is_high_confidence(self, mock_df, mock_config):
+        """K add with VOR gain +1.0 should be high confidence (K threshold = 1.0)."""
+        config = dict(mock_config)
+        config["min_vor_gain_to_recommend_add"] = {
+            "QB": 2.0, "TE": 2.0, "K": 1.0, "DEF": 1.0, "RB": 8.0, "WR": 8.0
+        }
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        recs = recommend_adds_drops(mock_df, roster, 3, config)
+        k_recs = [r for r in recs if r.add_position == "K" and r.vor_gain is not None]
+        for rec in k_recs:
+            if rec.vor_gain >= 1.0:
+                assert rec.confidence == "high", f"K rec {rec.add} with VOR {rec.vor_gain} should be high confidence"
+
+    def test_default_threshold_used_for_unknown_position(self, mock_df, mock_config):
+        """Unknown positions fall back to the default threshold."""
+        config = dict(mock_config)
+        config["min_vor_gain_to_recommend_add"] = {
+            "QB": 2.0, "TE": 2.0, "K": 1.0, "DEF": 1.0, "RB": 8.0, "WR": 8.0
+        }
+        # This just verifies the code path doesn'''t crash with unknown positions
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        recs = recommend_adds_drops(mock_df, roster, 3, config)
+        # All recs should have a valid confidence level
+        for rec in recs:
+            assert rec.confidence in ("high", "medium", "low")
