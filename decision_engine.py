@@ -446,6 +446,8 @@ def rank_free_agents(
 
     pos_players = pos_players[~pos_players["Status"].apply(_is_excluded)]
 
+    cols = ["Name", "Team", "Position", "Status", "% Owned", week_col, "VOR", "flagged"]
+
     if len(pos_players) == 0:
         return pd.DataFrame(columns=cols)
 
@@ -461,7 +463,6 @@ def rank_free_agents(
         ) else ""
     )
 
-    cols = ["Name", "Team", "Position", "Status", "% Owned", week_col, "VOR", "flagged"]
     available = [c for c in cols if c in pos_players.columns]
     return pos_players[available].reset_index(drop=True)
 

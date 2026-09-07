@@ -1,5 +1,6 @@
 league_id: 492312
-team_id: 1
+team_id: 7  # WARNING: must match your actual Yahoo team ID. Wrong-but-valid IDs silently analyze a different team with no error. Verify against Yahoo directly if changing.
+
 # team_name is derived from team_id at runtime via the scraped df
 # (no need to maintain it here — removing to avoid desync)
 positions: "QB, WR, WR, RB, RB, TE, W/R, K, DEF, BN, BN, BN, BN, BN, BN, IR"

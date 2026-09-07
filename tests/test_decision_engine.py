@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 import pytest
 
-from data_layer import validate_team_identifiers, get_team_name_from_id
+from data_layer import get_team_name_from_id
 from decision_engine import (
     get_my_roster,
     flag_bench_depth_gaps,
@@ -750,35 +750,6 @@ class TestActionPlan:
         assert "Jake Elliott" in md
 
 
-# --- Team identifier validation ---
-
-
-class TestValidateTeamIdentifiers:
-    def test_mismatched_team_id_and_name_raises(self, mock_df, mock_config):
-        """Mismatched team_id/team_name must raise ValueError immediately."""
-        bad_config = dict(mock_config)
-        bad_config["team_name"] = "Wrong Team Name"
-        with pytest.raises(ValueError, match="team_id=7 corresponds to"):
-            validate_team_identifiers(mock_df, bad_config)
-
-    def test_matching_team_id_and_name_passes(self, mock_df, mock_config):
-        """Matching team_id/team_name should not raise."""
-        validate_team_identifiers(mock_df, mock_config)  # must not raise
-
-    def test_team_id_not_found_raises(self, mock_df, mock_config):
-        """Unknown team_id should raise ValueError with available IDs."""
-        bad_config = dict(mock_config)
-        bad_config["team_id"] = 999
-        with pytest.raises(ValueError, match="not found in scraped data"):
-            validate_team_identifiers(mock_df, bad_config)
-
-    def test_none_identifiers_pass_silently(self, mock_df):
-        """Missing team_id or team_name should not raise."""
-        validate_team_identifiers(mock_df, {})  # no team_id or team_name
-        validate_team_identifiers(mock_df, {"team_id": 7})  # no team_name
-        validate_team_identifiers(mock_df, {"team_name": "anything"})  # no team_id
-
-
 # --- get_team_name_from_id ---
 
 
@@ -1442,3 +1413,18 @@ class TestRosterLimitInterleavesDrops:
         # Or more precisely: no pure drops were inserted
         pure_drops = [m for m in action_plan.moves if m.action == "drop" and m.add is None]
         assert len(pure_drops) == 0
+
+
+class TestRankFreeAgentsEdgeCases:
+    def test_rank_free_agents_zero_eligible_returns_empty_df(self, mock_df, mock_config):
+        """When all free agents at a position are excluded by injury status,
+        rank_free_agents must return an empty DataFrame, not crash."""
+        # Create a df where every free agent kicker is injured/excluded
+        df = mock_df.copy()
+        # Find all K players and set their status to IR
+        k_mask = df["Position"].apply(lambda p: "K" in {x.strip() for x in str(p).split(",")})
+        df.loc[k_mask, "Status"] = "IR"
+
+        result = rank_free_agents(df, "K", 3)
+        assert len(result) == 0
+        assert list(result.columns) == ["Name", "Team", "Position", "Status", "% Owned", "Week 3", "VOR", "flagged"]

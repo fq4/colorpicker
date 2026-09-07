@@ -156,7 +156,8 @@ def build_terminal_report(
         lines.append("  Dry-run mode — no actions submitted")
         lines.append("  Use --execute to submit recommendations")
     else:
-        lines.append("  EXECUTE mode — actions sent via executor")
+        lines.append("  Execute mode requested — executor.py is NOT wired to Yahoo")
+        lines.append("  No transactions were actually submitted.")
     lines.append(f"  Waiver priority: {waiver_priority} ({waiver_type})")
     lines.append(f"  Scoring: {scoring}")
     lines.append(bar)

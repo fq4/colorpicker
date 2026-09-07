@@ -135,45 +135,6 @@ def ensure_data_columns(df):
 
 
 
-def validate_team_identifiers(df, config):
-    """Verify config team_id and team_name refer to the same team.
-
-    Looks up the owner name associated with config['team_id'] in the scraped
-    DataFrame (via the 'Owner ID' / 'Owner' columns) and compares it against
-    config['team_name'].  Raises ValueError if they differ so the tool never
-    silently analyzes the wrong team.
-    """
-    team_id = config.get("team_id")
-    team_name = config.get("team_name")
-
-    if team_id is None or team_name is None:
-        return  # nothing to validate
-
-    # Build a mapping of owner_id -> owner_name from the df.
-    # Free Agent rows have NaN owner_id and are skipped.
-    id_to_name = {}
-    for _, row in df.iterrows():
-        owner_id = row.get("Owner ID")
-        owner = row.get("Owner")
-        if pd.notna(owner_id) and pd.notna(owner) and str(owner).strip() != "Free Agent":
-            id_to_name[owner_id] = str(owner).strip()
-
-    if team_id not in id_to_name:
-        raise ValueError(
-            f"config.yaml team_id={team_id} not found in scraped data. "
-            f"Available owner IDs: {sorted(set(id_to_name.keys()))}. "
-            f"Fix config.yaml before continuing."
-        )
-
-    resolved_name = id_to_name[team_id]
-    if resolved_name != team_name:
-        raise ValueError(
-            f"config.yaml team_id={team_id} corresponds to '{resolved_name}', "
-            f"but team_name is set to '{team_name}' — these must refer to the same team. "
-            f"Fix config.yaml before continuing."
-        )
-
-
 def get_team_name_from_id(df, team_id):
     """Resolve the owner name for a given team_id from the scraped DataFrame.
 
