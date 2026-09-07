@@ -21,6 +21,11 @@ venv/
 env/
 .pytest_cache/
 
+# Local distribution / launcher artifacts
+start_ffbot.bat
+windows_bundle/
+ffbot_friend_bundle/
+
 # IDE
 .vscode/
 .idea/
