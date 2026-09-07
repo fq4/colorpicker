@@ -293,7 +293,8 @@ def build_markdown_report(
     lines.append(f"| Scoring | {config.get('scoring_type', 'N/A')} |")
     lines.append(f"| Waiver type | {config.get('waiver_type', 'N/A')} |")
     lines.append(f"| Waiver priority | {config.get('waiver_priority', 'N/A')} |")
-    lines.append(f"| Mode | {'Dry-run (no actions submitted)' if dry_run else 'Execute (actions sent)'} |")
+    mode_str = "Dry-run (no actions submitted)" if dry_run else "Execute requested — NOT actually sent (executor not implemented)"
+    lines.append(f"| Mode | {mode_str} |")
     lines.append("")
 
     # 1. Current roster

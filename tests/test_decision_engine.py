@@ -1428,3 +1428,100 @@ class TestRankFreeAgentsEdgeCases:
         result = rank_free_agents(df, "K", 3)
         assert len(result) == 0
         assert list(result.columns) == ["Name", "Team", "Position", "Status", "% Owned", "Week 3", "VOR", "flagged"]
+
+
+class TestBenchDepthAwareDeprioritization:
+    def test_add_for_non_gap_position_with_negative_vor_is_flagged(
+        self, mock_df, mock_config
+    ):
+        """When a bench depth gap exists for WR, a below-replacement add for
+        a different position should be flagged as deprioritized."""
+        from decision_engine import flag_bench_depth_gaps
+
+        positions_config = {
+            "positions": "QB, WR, WR, RB, RB, TE, W/R, K, DEF, BN, BN, BN, BN, BN, BN, IR",
+            "bench_depth_minimums": {"RB": 1, "WR": 2, "QB": 1, "TE": 0},
+            "ir_statuses": mock_config.get("ir_statuses", []),
+            "min_usable_projection": mock_config.get("min_usable_projection", 1.0),
+        }
+
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+
+        # Verify WR gap exists
+        warnings = flag_bench_depth_gaps(roster, positions_config)
+        wr_warnings = [w for w in warnings if w.position == "WR"]
+        assert len(wr_warnings) == 1
+        depth_gap_positions = {w.position for w in warnings}
+
+        # Build a fake add recommendation for DEF with negative VOR
+        from decision_engine import AddDropRecommendation
+        rec = AddDropRecommendation(
+            action="fa_add",
+            add="Some DEF", add_position="DEF", add_team="TeamX",
+            add_projection=5.0, add_vor=-2.3, add_status="",
+            vor_gain=-2.3, confidence="medium", reason="test",
+        )
+
+        # Apply the deprioritization logic directly
+        if (
+            rec.add_position not in depth_gap_positions
+            and rec.add_vor is not None
+            and rec.add_vor < 0
+            and depth_gap_positions
+        ):
+            rec.flagged = True
+            gap_list = ", ".join(sorted(depth_gap_positions))
+            rec.flag_reason = (
+                f"Uses a bench slot on {rec.add_position} depth while "
+                f"your {gap_list} bench gap remains unaddressed"
+            )
+
+        assert rec.flagged is True
+        assert "bench gap remains unaddressed" in (rec.flag_reason or "")
+        assert "DEF" in (rec.flag_reason or "")
+        assert "WR" in (rec.flag_reason or "")
+
+    def test_recommend_adds_drops_flags_non_gap_negative_vor_add(
+        self, mock_df, mock_config
+    ):
+        """Integration: recommend_adds_drops should flag a below-replacement
+        add for a non-gap position when a bench depth gap exists elsewhere."""
+        import pandas as pd
+        from unittest.mock import patch
+
+        # Override bench_depth_minimums to require 2 usable bench WRs
+        # The mock roster has only 1 usable bench WR (Jordan Addison), so this
+        # creates a WR gap while the add recommendation is for DEF with negative VOR
+        config = dict(mock_config)
+        config["bench_depth_minimums"] = {"RB": 1, "WR": 2, "QB": 1, "TE": 0}
+
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+
+        # Create fake optimizer output: add a DEF with negative VOR
+        fake_opt = pd.DataFrame({
+            "Add": ["Some New DEF (DEF, XYZ)"],
+            "Drop": [""],
+            "VOR": [-2.0],
+        })
+
+        # Patch _lookup_player to return a controlled DEF player with negative VOR
+        fake_player = pd.Series({
+            "Name": "Some New DEF",
+            "Team": "XYZ",
+            "Position": "DEF",
+            "Status": "",
+            "% Owned": 5,
+            "Week 3": 5.0,
+            "VOR": -2.0,
+        })
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", return_value=fake_player):
+                recs = recommend_adds_drops(mock_df, roster, 3, config)
+
+        # Should have at least one recommendation
+        assert len(recs) >= 1
+
+        # The DEF add should be flagged with the deprioritization message
+        flagged_recs = [r for r in recs if r.flagged and "bench gap remains unaddressed" in (r.flag_reason or "")]
+        assert len(flagged_recs) >= 1

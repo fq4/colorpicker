@@ -644,6 +644,25 @@ def recommend_adds_drops(
                 f" | Drop target {drop_name} has injury status {rec.drop_status}"
             ).strip(" |")
 
+        # --- Cross-reference: bench depth gap awareness ---
+        # If there is an existing bench depth gap at position X, and this
+        # recommendation adds a player at a different position Y with
+        # below-replacement individual VOR, flag it as deprioritized.
+        if (
+            add_player is not None
+            and depth_gap_positions
+            and rec.add_position not in depth_gap_positions
+            and rec.add_vor is not None
+            and rec.add_vor < 0
+        ):
+            rec.flagged = True
+            gap_list = ", ".join(sorted(depth_gap_positions))
+            rec.flag_reason = (rec.flag_reason or "") + (
+                f" | Uses a bench slot on {rec.add_position} depth while "
+                f"your {gap_list} bench gap remains unaddressed — consider "
+                f"whether a {gap_list} free agent better serves your need this week"
+            ).strip(" |")
+
         # --- Build plain-English reason ---
         rec.reason = _build_add_drop_reason(
             rec, current_week, week_col, depth_gap_positions,
