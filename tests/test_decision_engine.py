@@ -804,41 +804,48 @@ class TestGetTeamNameFromId:
 
 class TestCLIOverridesAndFilenames:
     def test_cli_args_override_config(self):
-        """When --league-id or --team-id are provided, they override config.yaml."""
-        import argparse
-        from run_weekly import main as run_main
-        # We can't easily call main() without mocking, so test the parser directly
-        # by importing the parser setup logic. Instead, verify via the config dict:
-        config = {"league_id": 492312, "team_id": 7, "team_name": "Old Name"}
-        # Simulate what main() does
-        class Args:
-            league_id = 999
-            team_id = 5
-            config = "config.yaml"
-            max_cache_age = 12.0
-        args = Args()
-        if args.league_id is not None:
-            config["league_id"] = args.league_id
-        if args.team_id is not None:
-            config["team_id"] = args.team_id
+        """When CLI flags are provided, they override config.yaml."""
+        config = {
+            "league_id": 492312, "team_id": 7,
+            "waiver_priority": 10, "scoring_type": "half-pppr",
+            "positions": "QB, WR, RB", "waiver_type": "continual_rolling",
+        }
+        overrides = {
+            "league_id": 999, "team_id": 5,
+            "waiver_priority": 3, "scoring_type": "ppr",
+            "positions": "QB, WR, WR, RB, TE, BN, IR",
+            "waiver_type": "faab",
+        }
+        for key, value in overrides.items():
+            if value is not None:
+                config[key] = value
         assert config["league_id"] == 999
         assert config["team_id"] == 5
+        assert config["waiver_priority"] == 3
+        assert config["scoring_type"] == "ppr"
+        assert config["positions"] == "QB, WR, WR, RB, TE, BN, IR"
+        assert config["waiver_type"] == "faab"
 
     def test_config_values_used_when_no_cli_args(self):
-        """When no --league-id/--team-id flags are given, config.yaml values are kept."""
-        config = {"league_id": 492312, "team_id": 7, "team_name": "Old Name"}
-        class Args:
-            league_id = None
-            team_id = None
-            config = "config.yaml"
-            max_cache_age = 12.0
-        args = Args()
-        if args.league_id is not None:
-            config["league_id"] = args.league_id
-        if args.team_id is not None:
-            config["team_id"] = args.team_id
+        """When no CLI flags are given, config.yaml values are kept."""
+        config = {
+            "league_id": 492312, "team_id": 7,
+            "waiver_priority": 10, "scoring_type": "half-ppr",
+            "positions": "QB, WR, RB", "waiver_type": "continual_rolling",
+        }
+        overrides = {
+            "league_id": None, "team_id": None,
+            "waiver_priority": None, "scoring_type": None,
+            "positions": None, "waiver_type": None,
+        }
+        for key, value in overrides.items():
+            if value is not None:
+                config[key] = value
         assert config["league_id"] == 492312
         assert config["team_id"] == 7
+        assert config["waiver_priority"] == 10
+        assert config["scoring_type"] == "half-ppr"
+        assert config["waiver_type"] == "continual_rolling"
 
     def test_report_filename_reflects_league_and_team(self, tmp_path):
         """save_markdown_report should create a file named with league_id and team_id."""
@@ -849,6 +856,61 @@ class TestCLIOverridesAndFilenames:
         )
         assert "league_492312_team_7_week_3.md" in path
         assert os.path.exists(path)
+
+
+class TestPositionsOverride:
+    def test_custom_positions_changes_roster_limit(self, mock_df, mock_config):
+        """A custom --positions string should change the max roster size."""
+        from run_weekly import build_positions_config
+        from decision_engine import build_action_plan, recommend_lineup, AddDropRecommendation
+
+        # Custom positions with fewer bench spots: 13 total slots instead of 16
+        custom_positions = "QB, WR, RB, TE, K, DEF, BN, BN, IR"
+        custom_config = dict(mock_config)
+        custom_config["positions"] = custom_positions
+
+        positions_config = build_positions_config(custom_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        # With 13-slot config and 12-player roster, +3 net moves = 15 > 13
+        recs = [
+            AddDropRecommendation(action="fa_add", add="Player A"),
+            AddDropRecommendation(action="fa_add", add="Player B"),
+            AddDropRecommendation(action="fa_add", add="Player C"),
+        ]
+        action_plan = build_action_plan(
+            mock_df, roster, recs, positions_config, 3, original_lineup=lineup
+        )
+        from decision_engine import RosterLimitWarning
+        rlw = next(
+            (w for w in action_plan.remaining_warnings if isinstance(w, RosterLimitWarning)),
+            None,
+        )
+        assert rlw is not None
+        assert rlw.max_size == 9  # parse_positions counts 9 slots from custom string
+        assert rlw.excess > 0
+
+    def test_custom_positions_changes_bench_depth_gaps(self, mock_df, mock_config):
+        """A custom --positions string should change bench-depth-gap detection."""
+        from run_weekly import build_positions_config
+        from decision_engine import flag_bench_depth_gaps
+
+        # Config with BN minimums that differ from default
+        custom_positions = "QB, WR, WR, RB, RB, TE, W/R, K, DEF, BN, BN, BN, BN, BN, BN, IR"
+        custom_minimums = {"RB": 2, "WR": 2, "QB": 1}
+        custom_config = dict(mock_config)
+        custom_config["positions"] = custom_positions
+        custom_config["bench_depth_minimums"] = custom_minimums
+
+        positions_config = build_positions_config(custom_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        warnings = flag_bench_depth_gaps(roster, positions_config)
+
+        # With RB minimum=2 and only 1 usable bench RB, we should get a gap warning
+        rb_warnings = [w for w in warnings if w.position == "RB"]
+        assert len(rb_warnings) == 1
+        assert rb_warnings[0].minimum == 2
 
 
 # --- Bye Week Lookahead ---

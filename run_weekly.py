@@ -120,9 +120,12 @@ def run_weekly(config: dict, week: int | None = None, force_refresh: bool = Fals
     # Print resolved identity banner
     print()
     print("=" * 60)
-    print(f"  League ID : {config['league_id']}")
-    print(f"  Team ID   : {config['team_id']}")
-    print(f"  Team Name : {team_name}")
+    print(f"  League ID      : {config['league_id']}")
+    print(f"  Team ID        : {config['team_id']}")
+    print(f"  Team Name      : {team_name}")
+    print(f"  Scoring        : {config.get('scoring_type', 'N/A')}")
+    print(f"  Waiver Type    : {config.get('waiver_type', 'N/A')}")
+    print(f"  Waiver Priority: {config.get('waiver_priority', 'N/A')}")
     print("=" * 60)
     print()
 
@@ -211,6 +214,28 @@ def main():
         dest="team_id",
         help="Override team_id from config.yaml for this run"
     )
+    parser.add_argument(
+        "--waiver-priority", type=int, default=None,
+        dest="waiver_priority",
+        help="Override waiver_priority from config.yaml for this run (display-only)"
+    )
+    parser.add_argument(
+        "--scoring-type", type=str, default=None,
+        dest="scoring_type",
+        choices=["half-ppr", "ppr", "standard"],
+        help="Override scoring_type from config.yaml for this run (display-only)"
+    )
+    parser.add_argument(
+        "--positions", type=str, default=None,
+        dest="positions",
+        help='Override positions from config.yaml for this run (e.g. "QB, WR, WR, RB, RB, TE, W/R, K, DEF, BN, BN, BN, BN, BN, BN, IR")'
+    )
+    parser.add_argument(
+        "--waiver-type", type=str, default=None,
+        dest="waiver_type",
+        choices=["continual_rolling", "faab"],
+        help="Override waiver_type from config.yaml for this run (display-only)"
+    )
     args = parser.parse_args()
 
     dry_run = args.dry_run or not args.execute
@@ -225,6 +250,14 @@ def main():
         config["league_id"] = args.league_id
     if args.team_id is not None:
         config["team_id"] = args.team_id
+    if args.waiver_priority is not None:
+        config["waiver_priority"] = args.waiver_priority
+    if args.scoring_type is not None:
+        config["scoring_type"] = args.scoring_type
+    if args.positions is not None:
+        config["positions"] = args.positions
+    if args.waiver_type is not None:
+        config["waiver_type"] = args.waiver_type
 
     # Run pipeline (run_weekly will derive team_name from team_id via the df)
     report = run_weekly(config, week=args.week, force_refresh=args.force_refresh)
