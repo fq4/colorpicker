@@ -1052,11 +1052,17 @@ def build_action_plan(
         f"{len(skipped)} skipped (flagged)"
     )
 
-    simulated = simulate_post_move_roster(
-        df, my_roster, add_drop_recs, current_week
-    )
+    # Build sets of starter/IR names BEFORE any roster mutation so
+    # suggested drops never target protected players
+    starter_names: set[str] = set()
+    if original_lineup is not None:
+        starter_names = {s.player for s in original_lineup.starters}
+    ir_statuses = _parse_ir_statuses(positions_config)
+    ir_names: set[str] = set()
+    for _, row in my_roster.iterrows():
+        if _is_ir(row.get("Status"), ir_statuses):
+            ir_names.add(str(row.get("Name", "")))
 
-    # Check roster size limit
     max_roster_size = len(parse_positions(positions_config["positions"]))
     current_roster_size = len(my_roster)
     net_moves = (
@@ -1065,29 +1071,15 @@ def build_action_plan(
     )
     projected_size = current_roster_size + net_moves
 
-    roster_limit_warnings: list[RosterLimitWarning] = []
+    suggested: list[dict] = []
     if projected_size > max_roster_size:
         excess = projected_size - max_roster_size
-        # Build set of starter names from the original lineup so we never
-        # suggest dropping a current starter
-        starter_names: set[str] = set()
-        if original_lineup is not None:
-            starter_names = {s.player for s in original_lineup.starters}
-
-        # Also collect IR-status player names from the current roster
-        ir_statuses = _parse_ir_statuses(positions_config)
-        ir_names = set()
-        for _, row in my_roster.iterrows():
-            if _is_ir(row.get("Status"), ir_statuses):
-                ir_names.add(str(row.get("Name", "")))
-
         # Identify lowest-VOR bench players in the CURRENT roster as drop candidates,
         # excluding starters and IR-status players
         bench_df = my_roster.copy()
         week_col = _week_col(current_week)
         bench_df["_vor"] = bench_df["VOR"].apply(lambda v: _safe_float(v) or 0.0)
         bench_df = bench_df.sort_values(by="_vor", ascending=True)
-        suggested = []
         for _, row in bench_df.iterrows():
             name = str(row.get("Name", ""))
             if name in starter_names or name in ir_names:
@@ -1100,33 +1092,81 @@ def build_action_plan(
             if len(suggested) >= excess:
                 break
 
-        if suggested:
-            drop_names = ", ".join(
-                f"{d['name']} ({d['position']})" for d in suggested
-            )
-            message = (
-                f"Roster limit exceeded: {current_roster_size} current players + "
-                f"{net_moves} net moves = {projected_size}, but max is {max_roster_size}. "
-                f"Need {excess} additional drop(s) to fit. "
-                f"Suggested: {drop_names}."
-            )
-        else:
-            message = (
-                f"Roster limit exceeded: {current_roster_size} current players + "
-                f"{net_moves} net moves = {projected_size}, but max is {max_roster_size}. "
-                f"Need {excess} additional drop(s) to fit, but no bench players "
-                f"are available to drop."
-            )
+    # Interleave mandatory drops so every numbered step is executable in Yahoo.
+    # Walk the move list tracking roster size; when a pure add would overflow,
+    # insert a drop for the next suggested candidate immediately before it.
+    adjusted_moves: list[AddDropRecommendation] = []
+    roster_size = current_roster_size
+    suggested_iter = iter(suggested)
+    drops_inserted = 0
 
-        roster_limit_warnings.append(
+    for move in moves:
+        # If this is a pure add and roster is already full, insert a drop first
+        if move.add and not move.drop and roster_size >= max_roster_size:
+            try:
+                drop_candidate = next(suggested_iter)
+            except StopIteration:
+                # No more candidates; keep the move as-is and let it overflow
+                adjusted_moves.append(move)
+                continue
+
+            # Create a mandatory drop recommendation
+            drop_rec = AddDropRecommendation(
+                action="drop",
+                drop=drop_candidate["name"],
+                drop_position=drop_candidate["position"],
+                drop_team="",
+                drop_projection=None,
+                drop_vor=drop_candidate["vor"],
+                drop_status="",
+                reason=(
+                    f"Mandatory drop to make room for {move.add} "
+                    f"(roster limit: {max_roster_size} players)"
+                ),
+            )
+            adjusted_moves.append(drop_rec)
+            roster_size -= 1
+            drops_inserted += 1
+
+        # Apply the original move
+        if move.drop:
+            roster_size -= 1
+        if move.add:
+            roster_size += 1
+        adjusted_moves.append(move)
+
+    moves = adjusted_moves
+
+    # Re-simulate with the corrected move sequence
+    simulated = simulate_post_move_roster(
+        df, my_roster, moves, current_week
+    )
+
+    # Build warning describing what was auto-fixed
+    if drops_inserted > 0:
+        drop_names = ", ".join(
+            f"{d['name']} ({d['position']})" for d in suggested[:drops_inserted]
+        )
+        original_excess = projected_size - max_roster_size
+        roster_limit_warnings = [
             RosterLimitWarning(
                 current_size=current_roster_size,
                 max_size=max_roster_size,
-                excess=excess,
-                message=message,
-                suggested_drops=suggested,
+                excess=original_excess,
+                message=(
+                    f"Roster limit enforced: {drops_inserted} additional drop(s) "
+                    f"auto-inserted into the action plan to stay within the "
+                    f"{max_roster_size}-player limit. "
+                    f"Mandatory drops: {drop_names}."
+                ),
+                suggested_drops=suggested[:drops_inserted],
             )
-        )
+        ]
+    elif suggested:
+        # Had excess but all moves were swaps (net 0) — shouldn't normally happen
+        roster_limit_warnings = []
+    else:
+        roster_limit_warnings = []
 
     final_lineup = recommend_lineup(
         df, simulated, positions_config, current_week

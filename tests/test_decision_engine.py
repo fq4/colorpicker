@@ -864,7 +864,7 @@ class TestPositionsOverride:
         from run_weekly import build_positions_config
         from decision_engine import build_action_plan, recommend_lineup, AddDropRecommendation
 
-        # Custom positions with fewer bench spots: 13 total slots instead of 16
+        # Custom positions with fewer bench spots: 9 total slots
         custom_positions = "QB, WR, RB, TE, K, DEF, BN, BN, IR"
         custom_config = dict(mock_config)
         custom_config["positions"] = custom_positions
@@ -873,7 +873,8 @@ class TestPositionsOverride:
         roster = get_my_roster(mock_df, mock_config["team_name"], 3)
         lineup = recommend_lineup(mock_df, roster, positions_config, 3)
 
-        # With 13-slot config and 12-player roster, +3 net moves = 15 > 13
+        # 12-player roster, 9 max slots, +3 net moves = 15 > 9
+        # Interleaving should auto-insert 3 mandatory drops and emit a warning
         recs = [
             AddDropRecommendation(action="fa_add", add="Player A"),
             AddDropRecommendation(action="fa_add", add="Player B"),
@@ -888,8 +889,11 @@ class TestPositionsOverride:
             None,
         )
         assert rlw is not None
-        assert rlw.max_size == 9  # parse_positions counts 9 slots from custom string
-        assert rlw.excess > 0
+        assert rlw.max_size == 9
+        assert rlw.excess == 6  # 12 current + 3 adds = 15 projected, max = 9
+        assert "auto-inserted" in rlw.message
+        pure_drops = [m for m in action_plan.moves if m.action == "drop" and m.add is None]
+        assert len(pure_drops) == 3
 
     def test_custom_positions_changes_bench_depth_gaps(self, mock_df, mock_config):
         """A custom --positions string should change bench-depth-gap detection."""
@@ -1086,8 +1090,8 @@ class TestRosterSizeLimit:
         assert rlw.current_size == current_size
         assert rlw.max_size == max_size
         assert rlw.excess == current_size + 5 - max_size
-        assert "Roster limit exceeded" in rlw.message
-        assert len(rlw.suggested_drops) == rlw.excess
+        assert "Roster limit enforced" in rlw.message
+        assert len(rlw.suggested_drops) == 1
 
     def test_roster_limit_not_exceeded_no_warning(self, mock_df, mock_config):
         """When moves fit within roster size, no RosterLimitWarning."""
@@ -1285,3 +1289,156 @@ class TestRosterLimitExcludesStartersAndIR:
             for d in w.suggested_drops
         )
         assert has_drop, "No suggested drop names found in markdown report"
+
+
+class TestRosterLimitInterleavesDrops:
+    def test_mandatory_drops_interleaved_before_overflow_adds(
+        self, mock_df, mock_config
+    ):
+        """When pure adds exceed open slots, drops must be inserted before
+        the overflowing adds so every numbered step is executable in Yahoo."""
+        from decision_engine import (
+            AddDropRecommendation, build_action_plan, recommend_lineup,
+            RosterLimitWarning, _is_ir, _parse_ir_statuses,
+        )
+
+        positions_config = {
+            "positions": "QB, WR, WR, RB, RB, TE, W/R, K, DEF, BN, BN, BN, BN, BN, BN, IR",
+            "bench_depth_minimums": mock_config.get("bench_depth_minimums", {}),
+            "ir_statuses": mock_config.get("ir_statuses", []),
+            "min_usable_projection": mock_config.get("min_usable_projection", 1.0),
+        }
+
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        assert len(roster) == 12
+
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+        ir_statuses = _parse_ir_statuses(positions_config)
+
+        # 1 swap + 5 pure adds = net +5; 12 + 5 = 17 > 16, so 1 drop inserted
+        recs = [
+            AddDropRecommendation(
+                action="add_drop",
+                add="Player A", add_position="RB", add_team="TeamA",
+                add_projection=10.0, add_vor=5.0, add_status="",
+                drop="Woody Marks", drop_position="RB", drop_team="Hou",
+                drop_projection=7.2, drop_vor=-7.7, drop_status="",
+                vor_gain=12.7, confidence="high", reason="swap",
+            ),
+            AddDropRecommendation(
+                action="fa_add",
+                add="Player B", add_position="QB", add_team="TeamB",
+                add_projection=16.0, add_vor=3.0, add_status="",
+                vor_gain=3.0, confidence="high", reason="add B",
+            ),
+            AddDropRecommendation(
+                action="fa_add",
+                add="Player C", add_position="QB", add_team="TeamC",
+                add_projection=15.0, add_vor=2.0, add_status="",
+                vor_gain=2.0, confidence="high", reason="add C",
+            ),
+            AddDropRecommendation(
+                action="fa_add",
+                add="Player D", add_position="QB", add_team="TeamD",
+                add_projection=14.0, add_vor=1.0, add_status="",
+                vor_gain=1.0, confidence="medium", reason="add D",
+            ),
+            AddDropRecommendation(
+                action="fa_add",
+                add="Player E", add_position="QB", add_team="TeamE",
+                add_projection=13.0, add_vor=0.5, add_status="",
+                vor_gain=0.5, confidence="medium", reason="add E",
+            ),
+            AddDropRecommendation(
+                action="fa_add",
+                add="Player F", add_position="QB", add_team="TeamF",
+                add_projection=12.0, add_vor=0.0, add_status="",
+                vor_gain=0.0, confidence="low", reason="add F",
+            ),
+        ]
+
+        action_plan = build_action_plan(
+            mock_df, roster, recs, positions_config, 3, original_lineup=lineup
+        )
+
+        # 1 swap + 5 adds = 6 original; 1 drop inserted = 7 total
+        assert len(action_plan.moves) == 7
+
+        # 6th move (index 5) is the inserted pure drop
+        sixth_move = action_plan.moves[5]
+        assert sixth_move.action == "drop"
+        assert sixth_move.drop is not None
+        assert sixth_move.add is None
+        assert sixth_move.drop not in {s.player for s in lineup.starters}
+        ir_names = {
+            str(row.get("Name", ""))
+            for _, row in roster.iterrows()
+            if _is_ir(row.get("Status"), ir_statuses)
+        }
+        assert sixth_move.drop not in ir_names
+
+        # 7th move is the delayed add
+        seventh_move = action_plan.moves[6]
+        assert seventh_move.add == "Player F"
+
+        # Verify the interleaved drop is present in remaining_warnings
+        from decision_engine import RosterLimitWarning
+        rlw = next(
+            (w for w in action_plan.remaining_warnings if isinstance(w, RosterLimitWarning)),
+            None,
+        )
+        assert rlw is not None
+        assert "auto-inserted" in rlw.message
+        assert len(rlw.suggested_drops) == 1
+        assert rlw.suggested_drops[0]["name"] == sixth_move.drop
+
+    def test_no_interleaving_when_fits_within_limit(self, mock_df, mock_config):
+        """When moves fit within roster limit, no drops should be inserted."""
+        from decision_engine import (
+            AddDropRecommendation, build_action_plan, recommend_lineup,
+        )
+
+        positions_config = {
+            "positions": "QB, WR, WR, RB, RB, TE, W/R, K, DEF, BN, BN, BN, BN, BN, BN, IR",
+            "bench_depth_minimums": mock_config.get("bench_depth_minimums", {}),
+            "ir_statuses": mock_config.get("ir_statuses", []),
+            "min_usable_projection": mock_config.get("min_usable_projection", 1.0),
+        }
+
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        # 1 swap + 2 pure adds = net +2, 12 + 2 = 14 < 16, no overflow
+        recs = [
+            AddDropRecommendation(
+                action="add_drop",
+                add="Player A", add_position="RB", add_team="TeamA",
+                add_projection=10.0, add_vor=5.0, add_status="",
+                drop="Woody Marks", drop_position="RB", drop_team="Hou",
+                drop_projection=7.2, drop_vor=-7.7, drop_status="",
+                vor_gain=12.7, confidence="high", reason="swap",
+            ),
+            AddDropRecommendation(
+                action="fa_add",
+                add="Player B", add_position="QB", add_team="TeamB",
+                add_projection=16.0, add_vor=3.0, add_status="",
+                vor_gain=3.0, confidence="high", reason="add B",
+            ),
+            AddDropRecommendation(
+                action="fa_add",
+                add="Player C", add_position="QB", add_team="TeamC",
+                add_projection=15.0, add_vor=2.0, add_status="",
+                vor_gain=2.0, confidence="high", reason="add C",
+            ),
+        ]
+
+        action_plan = build_action_plan(
+            mock_df, roster, recs, positions_config, 3, original_lineup=lineup
+        )
+
+        # No interleaving should happen — moves list unchanged
+        assert len(action_plan.moves) == 3
+        assert all(m.action != "drop" or m.drop is None for m in action_plan.moves)
+        # Or more precisely: no pure drops were inserted
+        pure_drops = [m for m in action_plan.moves if m.action == "drop" and m.add is None]
+        assert len(pure_drops) == 0
