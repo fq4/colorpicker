@@ -549,6 +549,12 @@ def recommend_adds_drops(
     depth_warnings = flag_bench_depth_gaps(my_roster, positions_config)
     depth_gap_positions = {w.position for w in depth_warnings}
 
+    # Build current starter name set (used later in transparency check
+    # to exclude starters from the "worst-VOR alternative" comparison pool,
+    # matching the same exclusion logic used for suggested_drops)
+    current_lineup = recommend_lineup(df, my_roster, positions_config, current_week)
+    starter_names = {s.player for s in current_lineup.starters}
+
     # Run the optimizer
     logger.info("Running ffbot.optimize() ...")
     try:
@@ -705,10 +711,13 @@ def recommend_adds_drops(
             ]
             ir_statuses = _parse_ir_statuses(config)
             def _is_bench_row(row):
+                name = str(row.get("Name", "")).strip()
                 status = str(row.get("Status", "")).strip()
                 if not status or status in ("", "nan"):
-                    return True
+                    pass  # fall through to starter/name checks below
                 if any(status.startswith(ir) or status == ir for ir in ir_statuses):
+                    return False
+                if name in starter_names:
                     return False
                 return True
 

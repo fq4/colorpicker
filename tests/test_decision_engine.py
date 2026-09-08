@@ -1698,3 +1698,122 @@ class TestWorstVorTransparencyNote:
 
         assert len(recs) == 1
         assert "Note:" not in recs[0].reason
+
+
+    def test_note_excludes_starter_from_comparison(self, mock_df, mock_config):
+        """When the worst-VOR player at a position is a current starter,
+        the note should reference the worst bench player, not the starter."""
+        from unittest.mock import patch
+        import pandas as pd
+
+        config = dict(mock_config)
+        config["worst_vor_drop_note_threshold"] = 3.0
+
+        # Lower Josh Allen VOR to -50.0 while keeping his high Week 3 projection (24.5)
+        # so recommend_lineup still makes him the QB starter. He is now the
+        # worst-VOR QB overall, but as a starter he must be excluded from the
+        # "alternative drop" comparison pool.
+        df_mod = mock_df.copy()
+        allen_idx = df_mod[df_mod["Name"] == "Josh Allen"].index[0]
+        df_mod.loc[allen_idx, "VOR"] = -50.0
+
+        roster = get_my_roster(df_mod, mock_config["team_name"], 3)
+
+        # ffbot drops Kirk Cousins (bench QB, VOR 30.0) — not the worst bench QB.
+        # Joe Milton (bench, VOR -15.0) is the actual worst bench QB.
+        # The worst-VOR QB overall is Allen (starter, -50.0) but he must be excluded.
+        # Gap: 30.0 - (-15.0) = 45.0 > 3.0 -> note should appear mentioning Milton.
+        fake_opt = pd.DataFrame({
+            "Add": ["Tyler Shough (QB, NO)"],
+            "Drop": ["Kirk Cousins (QB, ATL)"],
+            "VOR": [-20.8],  # 9.2 - 30.0 = -20.8 (negative, but still a rec)
+        })
+
+        fake_add_player = pd.Series({
+            "Name": "Tyler Shough", "Team": "NO", "Position": "QB",
+            "Status": "", "% Owned": "41", "Week 3": 17.8, "VOR": 9.2,
+        })
+        fake_drop_player = pd.Series({
+            "Name": "Kirk Cousins", "Team": "ATL", "Position": "QB",
+            "Status": "", "% Owned": "5.0", "Week 3": 12.0, "VOR": 30.0,
+        })
+
+        def fake_lookup(df, name, position=None):
+            if name == "Tyler Shough":
+                return fake_add_player
+            elif name == "Kirk Cousins":
+                return fake_drop_player
+            return None
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", side_effect=fake_lookup):
+                recs = recommend_adds_drops(df_mod, roster, 3, config)
+
+        assert len(recs) == 1
+        rec = recs[0]
+        assert "Note:" in rec.reason
+        # Josh Allen (starter, VOR -50.0) is the worst-VOR QB overall but must
+        # be excluded from the comparison — note should mention Joe Milton instead.
+        assert "Joe Milton" in rec.reason
+        assert "Josh Allen" not in rec.reason
+
+    def test_note_absent_when_only_starters_and_ir_at_position(self, mock_df, mock_config):
+        """When all players at a position are starters or IR (no bench candidates),
+        the transparency note should not appear."""
+        from unittest.mock import patch
+        import pandas as pd
+        from tests.conftest import _make_player
+
+        config = dict(mock_config)
+        config["worst_vor_drop_note_threshold"] = 3.0
+
+        # Minimal roster: 1 QB starter + IR QB + other starters, but NO bench QBs.
+        minimal_rows = [
+            _make_player(1, "Josh Allen", "BUF", "QB", mock_config["team_name"], mock_config["team_id"], "", "75.3", 24.5, 85.3),
+            _make_player(2, "Tyreek Hill", "MIA", "WR", mock_config["team_name"], mock_config["team_id"], "Q", "98.2", 22.3, 142.1),
+            _make_player(3, "CeeDee Lamb", "DAL", "WR", mock_config["team_name"], mock_config["team_id"], "", "92.1", 19.8, 118.5),
+            _make_player(4, "Breece Hall", "NYJ", "RB", mock_config["team_name"], mock_config["team_id"], "", "88.5", 18.2, 95.0),
+            _make_player(5, "Jahmyr Gibbs", "DET", "RB", mock_config["team_name"], mock_config["team_id"], "", "72.0", 15.5, 82.3),
+            _make_player(6, "Sam LaPorta", "DET", "TE", mock_config["team_name"], mock_config["team_id"], "", "65.4", 10.2, 45.0),
+            _make_player(7, "Jake Elliott", "PHI", "K", mock_config["team_name"], mock_config["team_id"], "", "45.0", 8.5, 12.0),
+            _make_player(8, "San Francisco", "SF", "DEF", mock_config["team_name"], mock_config["team_id"], "", "52.3", 7.8, 8.0),
+            _make_player(10, "IR Backup QB", "FA", "QB", mock_config["team_name"], mock_config["team_id"], "IR", "0.1", 0.0, -2.0),
+        ]
+        df_minimal = pd.DataFrame(minimal_rows)
+        for w in range(1, 19):
+            col = f"Week {w}"
+            if col not in df_minimal.columns:
+                df_minimal[col] = 0.0
+
+        roster = get_my_roster(df_minimal, mock_config["team_name"], 3)
+
+        fake_opt = pd.DataFrame({
+            "Add": ["Tyler Shough (QB, NO)"],
+            "Drop": ["Josh Allen (QB, BUF)"],
+            "VOR": [7.1],
+        })
+
+        fake_add_player = pd.Series({
+            "Name": "Tyler Shough", "Team": "NO", "Position": "QB",
+            "Status": "", "% Owned": "41", "Week 3": 17.8, "VOR": 9.2,
+        })
+        fake_drop_player = pd.Series({
+            "Name": "Josh Allen", "Team": "BUF", "Position": "QB",
+            "Status": "", "% Owned": "75.3", "Week 3": 24.5, "VOR": 85.3,
+        })
+
+        def fake_lookup(df, name, position=None):
+            if name == "Tyler Shough":
+                return fake_add_player
+            elif name == "Josh Allen":
+                return fake_drop_player
+            return None
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", side_effect=fake_lookup):
+                recs = recommend_adds_drops(df_minimal, roster, 3, config)
+
+        assert len(recs) == 1
+        # No bench QB candidates exist (only Allen as starter + IR QB),
+        # so the transparency note should not appear.
+        assert "Note:" not in recs[0].reason
