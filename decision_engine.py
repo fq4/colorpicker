@@ -242,7 +242,13 @@ def get_my_roster(
     if week_col not in my_roster.columns:
         my_roster[week_col] = float("nan")
 
-    cols = ["Name", "Team", "Position", "Status", week_col, "VOR"]
+    week_columns = [
+        col for col in my_roster.columns
+        if col.startswith("Week ") and col[5:].isdigit()
+    ]
+    week_columns = [week_col] + [col for col in week_columns if col != week_col]
+    cols = ["Name", "Team", "Position", "Status", *week_columns, "VOR"]
+    cols = list(dict.fromkeys(cols))
     result = my_roster[cols].sort_values(by=week_col, ascending=False).reset_index(drop=True)
     return result
 
@@ -858,23 +864,26 @@ def recommend_lineup(
     players = my_roster.copy()
 
     # Fill IR slot with injured players
-    ir_slot = None
+    ir_slots: list[LineupSlot] = []
     if "IR" in slots:
         ir_players = players[
             players["Status"].apply(lambda s: _is_ir(s, ir_statuses))
         ]
-        if len(ir_players) > 0:
-            ir_row = ir_players.iloc[0]
-            ir_slot = LineupSlot(
-                slot="IR",
-                player=str(ir_row["Name"]),
-                team=str(ir_row["Team"]),
-                position=str(ir_row["Position"]),
-                projection=_safe_float(ir_row.get(week_col)) or 0.0,
-                vor=_safe_float(ir_row.get("VOR")) or 0.0,
-                status=_safe_status(ir_row.get("Status")) or "",
+        for _, ir_row in ir_players.iterrows():
+            ir_slots.append(
+                LineupSlot(
+                    slot="IR",
+                    player=str(ir_row["Name"]),
+                    team=str(ir_row["Team"]),
+                    position=str(ir_row["Position"]),
+                    projection=_safe_float(ir_row.get(week_col)) or 0.0,
+                    vor=_safe_float(ir_row.get("VOR")) or 0.0,
+                    status=_safe_status(ir_row.get("Status")) or "",
+                )
             )
-            players = players[players["Name"] != ir_row["Name"]]
+        players = players[
+            ~players["Status"].apply(lambda s: _is_ir(s, ir_statuses))
+        ]
 
     # Separate players by eligibility
     # A player is eligible for a slot if their Position includes any position
@@ -980,9 +989,8 @@ def recommend_lineup(
         warnings=warnings,
     )
 
-    if ir_slot:
-        # Add IR slot to bench so it appears in the bench table
-        bench_slots.append(ir_slot)
+    # Add IR players to the displayed bench without allowing them into starters.
+    bench_slots.extend(ir_slots)
 
     return result
 
@@ -1059,36 +1067,40 @@ def simulate_post_move_roster(
         if rec.flagged:
             continue
 
+        player = None
+        if rec.add:
+            player = _lookup_player(df, rec.add, rec.add_position)
+            if player is None:
+                logger.warning(
+                    f"Could not find '{rec.add}' in df for simulated roster; "
+                    "skipping the recommendation"
+                )
+                continue
+
         # 1. Drop
         if rec.drop:
             simulated = simulated[simulated["Name"] != rec.drop]
 
         # 2. Add
         if rec.add:
-            player = _lookup_player(df, rec.add, rec.add_position)
-            if player is not None:
-                new_row = {}
-                for col in cols:
-                    if col == week_col:
-                        new_row[col] = _safe_float(player.get(week_col)) or 0.0
-                    elif col == "VOR":
-                        new_row[col] = _safe_float(player.get("VOR")) or 0.0
-                    elif col == "Status":
-                        new_row[col] = _safe_status(player.get("Status")) or None
-                    elif col in player.index:
-                        new_row[col] = player[col]
-                    else:
-                        new_row[col] = None
-                simulated = pd.concat(
-                    [simulated, pd.DataFrame([new_row])], ignore_index=True
-                )
-                logger.debug(
-                    f"Simulated add: {rec.add} ({rec.add_position}, {rec.add_team})"
-                )
-            else:
-                logger.warning(
-                    f"Could not find '{rec.add}' in df for simulated roster"
-                )
+            new_row = {}
+            for col in cols:
+                if col == week_col:
+                    new_row[col] = _safe_float(player.get(week_col)) or 0.0
+                elif col == "VOR":
+                    new_row[col] = _safe_float(player.get("VOR")) or 0.0
+                elif col == "Status":
+                    new_row[col] = _safe_status(player.get("Status")) or None
+                elif col in player.index:
+                    new_row[col] = player[col]
+                else:
+                    new_row[col] = None
+            simulated = pd.concat(
+                [simulated, pd.DataFrame([new_row])], ignore_index=True
+            )
+            logger.debug(
+                f"Simulated add: {rec.add} ({rec.add_position}, {rec.add_team})"
+            )
 
     # Re-sort by week projection descending to match get_my_roster output
     if week_col in simulated.columns:
@@ -1263,13 +1275,13 @@ def _generate_comparison_notes(moves, original_lineup):
         return notes
     starter_by_pos = {}
     for s in original_lineup.starters:
-        pos_set = {p.strip() for p in str(s.position).split(chr(34)+chr(44)+chr(34))}
+        pos_set = {p.strip() for p in str(s.position).split(",")}
         for pos in pos_set:
             starter_by_pos[pos] = s
     for rec in moves:
         if rec.add is None or rec.add_projection is None:
             continue
-        add_position = rec.add_position or chr(34)+chr(34)
+        add_position = rec.add_position or ""
         add_proj = rec.add_projection
         add_pos_clean = add_position.strip()
         matching_starter = None
