@@ -1525,3 +1525,142 @@ class TestBenchDepthAwareDeprioritization:
         # The DEF add should be flagged with the deprioritization message
         flagged_recs = [r for r in recs if r.flagged and "bench gap remains unaddressed" in (r.flag_reason or "")]
         assert len(flagged_recs) >= 1
+
+
+class TestWorstVorTransparencyNote:
+    def test_note_appears_when_gap_exceeds_threshold(self, mock_df, mock_config):
+        """When ffbot drops a mid-VOR player but a worse-VOR bench player exists
+        at the same position, the transparency note should appear in rec.reason."""
+        from unittest.mock import patch
+        import pandas as pd
+
+        config = dict(mock_config)
+        config["worst_vor_drop_note_threshold"] = 3.0
+
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+
+        # Fake optimizer output: add Tyler Shough (QB), drop Daniel Jones (QB)
+        # Jones VOR = +2.1, Darnold VOR = -9.3 (gap = 11.4 > 3.0 threshold)
+        fake_opt = pd.DataFrame({
+            "Add": ["Tyler Shough (QB, NO)"],
+            "Drop": ["Daniel Jones (QB, Ind)"],
+            "VOR": [7.1],
+        })
+
+        fake_add_player = pd.Series({
+            "Name": "Tyler Shough", "Team": "NO", "Position": "QB",
+            "Status": "", "% Owned": "41", "Week 3": 17.8, "VOR": 9.2,
+        })
+        fake_drop_player = pd.Series({
+            "Name": "Daniel Jones", "Team": "Ind", "Position": "QB",
+            "Status": "", "% Owned": "75.3", "Week 3": 17.6, "VOR": 2.1,
+        })
+
+        def fake_lookup(df, name, position=None):
+            if name == "Tyler Shough":
+                return fake_add_player
+            elif name == "Daniel Jones":
+                return fake_drop_player
+            return None
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", side_effect=fake_lookup):
+                recs = recommend_adds_drops(mock_df, roster, 3, config)
+
+        assert len(recs) == 1
+        rec = recs[0]
+        assert rec.drop == "Daniel Jones"
+        assert "Note:" in rec.reason
+        # The actual worst bench QB in the mock roster is Joe Milton (VOR -15.0),
+        # not Sam Darnold (who is not in the roster — only referenced as the
+        # optimizer's drop target in the scenario description).
+        assert "Joe Milton" in rec.reason
+        assert rec.reason.count("+2.1") >= 1 or rec.reason.count("-15.0") >= 1
+
+    def test_note_absent_when_gap_below_threshold(self, mock_df, mock_config):
+        """When the VOR gap between ffbot's drop and the worst bench player is
+        below the threshold, no transparency note should appear."""
+        from unittest.mock import patch
+        import pandas as pd
+
+        config = dict(mock_config)
+        config["worst_vor_drop_note_threshold"] = 20.0  # very high threshold
+
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+
+        fake_opt = pd.DataFrame({
+            "Add": ["Tyler Shough (QB, NO)"],
+            "Drop": ["Daniel Jones (QB, Ind)"],
+            "VOR": [7.1],
+        })
+
+        fake_add_player = pd.Series({
+            "Name": "Tyler Shough", "Team": "NO", "Position": "QB",
+            "Status": "", "% Owned": "41", "Week 3": 17.8, "VOR": 9.2,
+        })
+        fake_drop_player = pd.Series({
+            "Name": "Daniel Jones", "Team": "Ind", "Position": "QB",
+            "Status": "", "% Owned": "75.3", "Week 3": 17.6, "VOR": 2.1,
+        })
+
+        def fake_lookup(df, name, position=None):
+            if name == "Tyler Shough":
+                return fake_add_player
+            elif name == "Daniel Jones":
+                return fake_drop_player
+            return None
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", side_effect=fake_lookup):
+                recs = recommend_adds_drops(mock_df, roster, 3, config)
+
+        assert len(recs) == 1
+        assert "Note:" not in recs[0].reason
+
+    def test_note_absent_when_ffbot_chooses_worst_vor(self, mock_df, mock_config):
+        """When ffbot's chosen drop IS the lowest-VOR bench player, no note."""
+        from unittest.mock import patch
+        import pandas as pd
+        from tests.conftest import _make_player
+
+        config = dict(mock_config)
+        config["worst_vor_drop_note_threshold"] = 3.0
+
+        # Add Sam Darnold to the mock roster with VOR lower than all existing QBs
+        # so that when ffbot drops him, he IS the worst-VOR option — no note should appear.
+        darnold_row = _make_player(
+            50, "Sam Darnold", "Sea", "QB",
+            mock_config["team_name"], mock_config["team_id"],
+            "", "5.0", 16.2, -20.0,
+        )
+        df_with_darnold = pd.concat([mock_df, pd.DataFrame([darnold_row])], ignore_index=True)
+        roster = get_my_roster(df_with_darnold, mock_config["team_name"], 3)
+
+        fake_opt = pd.DataFrame({
+            "Add": ["Tyler Shough (QB, NO)"],
+            "Drop": ["Sam Darnold (QB, Sea)"],
+            "VOR": [29.5],  # 9.2 - (-20.0) = 29.5
+        })
+
+        fake_add_player = pd.Series({
+            "Name": "Tyler Shough", "Team": "NO", "Position": "QB",
+            "Status": "", "% Owned": "41", "Week 3": 17.8, "VOR": 9.2,
+        })
+        fake_drop_player = pd.Series({
+            "Name": "Sam Darnold", "Team": "Sea", "Position": "QB",
+            "Status": "", "% Owned": "5.0", "Week 3": 16.2, "VOR": -20.0,
+        })
+
+        def fake_lookup(df, name, position=None):
+            if name == "Tyler Shough":
+                return fake_add_player
+            elif name == "Sam Darnold":
+                return fake_drop_player
+            return None
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", side_effect=fake_lookup):
+                recs = recommend_adds_drops(df_with_darnold, roster, 3, config)
+
+        assert len(recs) == 1
+        assert "Note:" not in recs[0].reason

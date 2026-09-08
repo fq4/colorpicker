@@ -20,6 +20,7 @@ min_vor_gain_to_recommend_add:
   WR: 8.0
 min_vor_loss_to_flag_drop: -50.0
 min_usable_projection: 1.0
+worst_vor_drop_note_threshold: 3.0  # VOR gap threshold for transparency note when ffbot's drop is not the worst-VOR bench player
 bench_depth_minimums:
   RB: 1
   WR: 1

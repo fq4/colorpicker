@@ -675,6 +675,56 @@ def recommend_adds_drops(
             rec, min_vor_add_default, min_vor_add_config, ir_statuses, depth_gap_positions
         )
 
+        # --- Transparency: ffbot drop vs worst-VOR bench player (appended AFTER reason build) ---
+        # ffbot's optimizer maximizes starting-lineup points, not VOR, so it may
+        # choose to drop a mid-VOR bench player while a worse-VOR bench player
+        # at the same position is available. Surface that fact as information
+        # for the user to weigh — no override, just transparency.
+        if (
+            drop_player is not None
+            and add_player is not None
+            and rec.add_position
+            and rec.drop_position
+            and rec.add_position == rec.drop_position
+        ):
+            threshold = float(config.get("worst_vor_drop_note_threshold", 3.0))
+            same_pos_mask = (
+                my_roster["Position"].apply(
+                    lambda p: rec.drop_position in {x.strip() for x in str(p).split(",")}
+                )
+            )
+            same_pos_roster = my_roster[same_pos_mask].copy()
+            same_pos_roster = same_pos_roster[
+                same_pos_roster["Name"] != str(drop_player["Name"])
+            ]
+            ir_statuses = _parse_ir_statuses(config)
+            def _is_bench_row(row):
+                status = str(row.get("Status", "")).strip()
+                if not status or status in ("", "nan"):
+                    return True
+                if any(status.startswith(ir) or status == ir for ir in ir_statuses):
+                    return False
+                return True
+
+            bench_candidates = same_pos_roster[same_pos_roster.apply(_is_bench_row, axis=1)]
+            if len(bench_candidates) > 0:
+                bench_candidates = bench_candidates.copy()
+                bench_candidates["_vor"] = bench_candidates["VOR"].apply(_safe_float).fillna(0.0)
+                worst_row = bench_candidates.loc[bench_candidates["_vor"].idxmin()]
+                worst_vor = _safe_float(worst_row.get("VOR")) or 0.0
+                drop_vor = _safe_float(drop_player.get("VOR")) or 0.0
+                vor_gap = drop_vor - worst_vor
+                if vor_gap > threshold:
+                    note = (
+                        f"Note: ffbot's optimizer chose to drop {rec.drop} "
+                        f"({drop_vor:+.1f}), but "
+                        f"{worst_row['Name']} ({worst_vor:+.1f}) "
+                        f"has lower individual VOR. ffbot optimizes full-season point "
+                        f"projections, not VOR, so this may reflect factors VOR "
+                        f"doesn't capture — use your judgment."
+                    )
+                    rec.reason = rec.reason.rstrip(".") + f". {note}"
+
         recs.append(rec)
 
     # Sort: non-flagged first by VOR gain descending, then flagged
