@@ -2,6 +2,7 @@
 Data layer — fetch, cache, and manage Yahoo Fantasy Football data via ffbot.
 """
 import os
+import re
 import time
 import glob
 from datetime import datetime
@@ -23,7 +24,7 @@ def load_config(config_path=DEFAULT_CONFIG_PATH):
     return config
 
 
-def save_weekly_cache(df, week, data_dir=DATA_DIR):
+def save_weekly_cache(df, week, data_dir=DATA_DIR, league_id=None):
     """Cache scraped data to disk via ffbot.save().
 
     Uses ffbot's own save function for format compatibility.
@@ -33,7 +34,8 @@ def save_weekly_cache(df, week, data_dir=DATA_DIR):
 
     # Also save with a week-prefixed name for easier programmatic lookup
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = os.path.join(data_dir, f"week_{week}_{timestamp}.csv")
+    prefix = f"league_{league_id}_" if league_id is not None else ""
+    filename = os.path.join(data_dir, f"{prefix}week_{week}_{timestamp}.csv")
     df.to_csv(filename, index=False)
     logger.info(f"Cached data to {filename}")
     return filename
@@ -49,7 +51,7 @@ def get_fresh_data(league_id, is_idp=False, config_path=DEFAULT_CONFIG_PATH):
     week = ffbot.current_week()
 
     try:
-        save_weekly_cache(df, week)
+        save_weekly_cache(df, week, league_id=league_id)
     except Exception as e:
         logger.warning(f"Cache save failed: {e}")
 
@@ -67,9 +69,12 @@ def get_latest_cached_or_fresh(league_id, is_idp=False, max_age_hours=12):
         logger.info("No data directory — scraping fresh.")
         return get_fresh_data(league_id, is_idp)
 
-    pattern = os.path.join(data_dir, "week_*_*.csv")
+    pattern = os.path.join(data_dir, f"league_{league_id}_week_*_*.csv")
     files = glob.glob(pattern)
-    files = [f for f in files if os.path.getsize(f) > 0]
+    files = [
+        f for f in files
+        if os.path.getsize(f) > 0 and _cache_filename_parts(f) is not None
+    ]
 
     if not files:
         logger.info("No cached data — scraping fresh.")
@@ -93,15 +98,25 @@ def get_latest_cached_or_fresh(league_id, is_idp=False, max_age_hours=12):
 
 def _load_cache(filepath):
     """Load a cached CSV file and return (df, week)."""
+    parts = _cache_filename_parts(filepath)
+    if parts is None:
+        raise ValueError(f"Invalid cache filename: {filepath}")
+
     df = pd.read_csv(filepath)
 
-    # Parse week from filename (format: week_{n}_{timestamp}.csv)
-    basename = os.path.basename(filepath)
-    parts = basename.replace(".csv", "").split("_")
-    week = int(parts[1])
+    week = parts[0]
 
     logger.info(f"Loaded {len(df)} players from cache (week {week})")
     return df, week
+
+
+def _cache_filename_parts(filepath):
+    """Return (week, timestamp) for a league-scoped cache filename."""
+    basename = os.path.basename(filepath)
+    match = re.fullmatch(r"league_[^_]+_week_(\d+)_(\d{8}_\d{6})\.csv", basename)
+    if not match:
+        return None
+    return int(match.group(1)), match.group(2)
 
 
 def ensure_data_columns(df):

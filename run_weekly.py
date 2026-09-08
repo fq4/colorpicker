@@ -105,9 +105,11 @@ def run_weekly(config: dict, week: int | None = None, force_refresh: bool = Fals
 
     logger.info("Fetching data ...")
     if force_refresh:
-        df, current_week = get_fresh_data(league_id, is_idp)
+        df, fetched_week = get_fresh_data(league_id, is_idp)
     else:
-        df, current_week = get_latest_cached_or_fresh(league_id, is_idp, max_age_hours=max_age)
+        df, fetched_week = get_latest_cached_or_fresh(league_id, is_idp, max_age_hours=max_age)
+    if week is None:
+        current_week = fetched_week
 
     # Ensure expected columns exist
     df = ensure_data_columns(df)
@@ -283,9 +285,11 @@ def main():
     )
 
     # Execute (only if --execute)
-    if not dry_run and report.add_drop_recs:
+    action_plan = report.action_plan
+    executable_moves = action_plan.moves if action_plan is not None else report.add_drop_recs
+    if not dry_run and executable_moves:
         logger.info("Executing recommendations ...")
-        for rec in report.add_drop_recs:
+        for rec in executable_moves:
             if rec.confidence == "low":
                 logger.info(f"Skipping low-confidence recommendation: {rec.add} / {rec.drop}")
                 continue
@@ -293,13 +297,14 @@ def main():
                 add_player=rec.add,
                 drop_player=rec.drop,
                 waiver_priority=config.get("waiver_priority"),
-                transaction_type=rec.action if rec.action in ("waiver_claim", "waiver_add") else "fa",
+                transaction_type="waiver" if rec.action in ("waiver_claim", "waiver_add") else "fa",
                 dry_run=False,
             )
             logger.info(f"Execution result: {result}")
 
-        if report.lineup:
-            lineup_result = set_lineup(report.lineup, dry_run=False)
+        final_lineup = action_plan.final_lineup if action_plan is not None else report.lineup
+        if final_lineup:
+            lineup_result = set_lineup(final_lineup, dry_run=False)
             logger.info(f"Lineup result: {lineup_result}")
 
     logger.info("=== Done ===")

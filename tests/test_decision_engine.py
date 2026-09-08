@@ -76,6 +76,11 @@ class TestGetMyRoster:
         roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
         assert len(roster) > 0  # Team name with Arabic chars matched correctly
 
+    def test_retains_future_week_projections(self, mock_df, mock_config):
+        roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
+        assert "Week 4" in roster.columns
+        assert roster.columns.get_loc("Week 3") < roster.columns.get_loc("Week 4")
+
 
 # ── flag_bench_depth_gaps ────────────────────────────────────────────────
 
@@ -202,6 +207,21 @@ class TestRecommendLineup:
         pos = wr_or_b[0].position
         # W/R should be filled by a WR or RB
         assert "WR" in pos or "RB" in pos
+
+    def test_all_ir_players_are_excluded_from_starters(self, mock_df, mock_config, positions_config):
+        extra_ir = mock_df[mock_df["Name"] == "Robbie Ouzts"].iloc[0].copy()
+        extra_ir["Name"] = "Second IR Player"
+        extra_ir["Position"] = "WR"
+        extra_ir["Status"] = "IR-R"
+        roster = get_my_roster(
+            pd.concat([mock_df, pd.DataFrame([extra_ir])], ignore_index=True),
+            mock_config["team_name"],
+            WEEK,
+        )
+        lineup = recommend_lineup(mock_df, roster, positions_config, WEEK)
+        starter_names = {slot.player for slot in lineup.starters}
+        assert "Robbie Ouzts" not in starter_names
+        assert "Second IR Player" not in starter_names
 
 
 # ── recommend_adds_drops ───────────────────────────────────────────────────
@@ -521,6 +541,20 @@ class TestActionPlan:
         assert "Josh Allen" in simulated["Name"].values
         assert "Tyreek Hill" in simulated["Name"].values
         assert "Robbie Ouzts" in simulated["Name"].values
+
+    def test_simulate_invalid_add_does_not_apply_drop(self, mock_df, mock_config, positions_config):
+        roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
+        rec = AddDropRecommendation(
+            action="add_drop",
+            add="Missing Player",
+            add_position="K",
+            drop="Jake Elliott",
+            drop_position="K",
+            flagged=False,
+        )
+        simulated = simulate_post_move_roster(mock_df, roster, [rec], WEEK)
+        assert "Jake Elliott" in simulated["Name"].values
+        assert "Missing Player" not in simulated["Name"].values
 
     def test_build_action_plan_separates_moves_and_skipped(self, mock_df, mock_config, positions_config):
         """Non-flagged recs go to moves, flagged recs go to skipped."""
