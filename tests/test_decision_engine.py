@@ -784,6 +784,179 @@ class TestActionPlan:
         assert "Jake Elliott" in md
 
 
+
+class TestIntraRosterComparisonNotes:
+    """Tests for bench-upgrade comparison notes (intra-roster swaps)."""
+
+    def test_bench_player_outprojecting_starter_generates_note(
+        self, mock_df, mock_config, positions_config
+    ):
+        """A bench player with higher weekly projection than a starter at the
+        same position should generate a comparison note explaining the swap."""
+        import pandas as pd
+        from decision_engine import (
+            AddDropRecommendation,
+            LineupSlot,
+            LineupRecommendation,
+            _generate_comparison_notes,
+        )
+
+        # Simulate a Pittman/Coker-like scenario:
+        # WR starter has proj 8.7, bench WR has proj 8.8 (higher, but benched).
+        starter = LineupSlot(
+            slot="WR1",
+            player="Michael Pittman Jr.",
+            team="Pit",
+            position="WR",
+            projection=8.7,
+            vor=12.4,
+            status="Q",
+            flagged=True,
+            bench_alternative="Romeo Doubs",
+            bench_alt_projection=8.2,
+        )
+        bench_slot = LineupSlot(
+            slot="BN",
+            player="Jalen Coker",
+            team="Car",
+            position="WR",
+            projection=8.8,
+            vor=-2.0,
+            status="",
+            flagged=False,
+        )
+        original_lineup = LineupRecommendation(
+            starters=[starter],
+            bench=[bench_slot],
+            total_projection=8.7,
+            total_vor=12.4,
+            flagged_starters=[starter],
+            warnings=[],
+        )
+        final_lineup = LineupRecommendation(
+            starters=[starter],
+            bench=[bench_slot],
+            total_projection=8.7,
+            total_vor=12.4,
+            flagged_starters=[starter],
+            warnings=[],
+        )
+        # No moves — purely intra-roster projection drift
+        notes = _generate_comparison_notes([], original_lineup, final_lineup)
+        assert len(notes) == 1
+        assert "Jalen Coker" in notes[0]
+        assert "Michael Pittman Jr." in notes[0]
+        assert "starts over" in notes[0]
+        assert "8.8" in notes[0]
+        assert "8.7" in notes[0]
+
+    def test_bench_player_below_starter_no_note(
+        self, mock_df, mock_config, positions_config
+    ):
+        """A bench player with lower projection than the starter should not
+        generate a comparison note."""
+        from decision_engine import (
+            LineupSlot,
+            LineupRecommendation,
+            _generate_comparison_notes,
+        )
+
+        starter = LineupSlot(
+            slot="WR1",
+            player="Michael Pittman Jr.",
+            team="Pit",
+            position="WR",
+            projection=9.0,
+            vor=12.4,
+            status="",
+            flagged=False,
+        )
+        bench_slot = LineupSlot(
+            slot="BN",
+            player="Jalen Coker",
+            team="Car",
+            position="WR",
+            projection=8.8,
+            vor=-2.0,
+            status="",
+            flagged=False,
+        )
+        original_lineup = LineupRecommendation(
+            starters=[starter],
+            bench=[bench_slot],
+            total_projection=9.0,
+            total_vor=12.4,
+            flagged_starters=[],
+            warnings=[],
+        )
+        final_lineup = LineupRecommendation(
+            starters=[starter],
+            bench=[bench_slot],
+            total_projection=9.0,
+            total_vor=12.4,
+            flagged_starters=[],
+            warnings=[],
+        )
+        notes = _generate_comparison_notes([], original_lineup, final_lineup)
+        assert len(notes) == 0
+
+    def test_new_add_note_not_duplicated_by_bench_pass(
+        self, mock_df, mock_config, positions_config
+    ):
+        """When a new add out-projects a starter, pass 1 already covers it;
+        pass 2 should not produce a duplicate note for the same player."""
+        from decision_engine import (
+            AddDropRecommendation,
+            LineupSlot,
+            LineupRecommendation,
+            _generate_comparison_notes,
+        )
+
+        starter = LineupSlot(
+            slot="TE",
+            player="Hunter Henry",
+            team="NE",
+            position="TE",
+            projection=7.16,
+            vor=8.8,
+            status="",
+            flagged=False,
+        )
+        # New add: Juwan Johnson — this is handled by pass 1
+        rec = AddDropRecommendation(
+            action="add_drop",
+            add="Juwan Johnson",
+            add_position="TE",
+            add_team="NO",
+            add_projection=7.64,
+            add_vor=3.0,
+            vor_gain=3.0,
+            reason="test",
+            confidence="high",
+            flagged=False,
+        )
+        original_lineup = LineupRecommendation(
+            starters=[starter],
+            bench=[],
+            total_projection=7.16,
+            total_vor=8.8,
+            flagged_starters=[],
+            warnings=[],
+        )
+        final_lineup = LineupRecommendation(
+            starters=[starter],
+            bench=[],
+            total_projection=7.16,
+            total_vor=8.8,
+            flagged_starters=[],
+            warnings=[],
+        )
+        notes = _generate_comparison_notes([rec], original_lineup, final_lineup)
+        # Should have exactly 1 note from pass 1, not duplicated by pass 2
+        assert len(notes) == 1
+        assert "Juwan Johnson" in notes[0]
+        assert "replaces" in notes[0]
+
 # --- get_team_name_from_id ---
 
 
