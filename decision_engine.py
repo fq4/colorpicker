@@ -380,8 +380,31 @@ def check_upcoming_byes(
             val = row.get(col)
             proj = _safe_float(val)
             if proj is None or proj == 0:
-                bye_week = week_num
-                break
+                # Confirm a genuine "sandwich" pattern: a normal (non-zero)
+                # projection exists both before AND after this zero/null week
+                # within the available data. This avoids false positives at
+                # season boundaries (e.g. Week 18 with no Week 19 to confirm).
+                week_cols_all = [
+                    f"Week {w}" for w in range(1, 19) if f"Week {w}" in my_roster.columns
+                ]
+                week_idx = week_cols_all.index(col) if col in week_cols_all else -1
+                has_prior = False
+                has_after = False
+                if week_idx > 0:
+                    prior_cols = week_cols_all[:week_idx]
+                    has_prior = any(
+                        (_safe_float(row.get(prior_col)) or 0) > 0
+                        for prior_col in prior_cols
+                    )
+                if week_idx >= 0 and week_idx < len(week_cols_all) - 1:
+                    after_cols = week_cols_all[week_idx + 1 :]
+                    has_after = any(
+                        (_safe_float(row.get(after_col)) or 0) > 0
+                        for after_col in after_cols
+                    )
+                if has_prior and has_after:
+                    bye_week = week_num
+                    break
 
         if bye_week is None:
             continue

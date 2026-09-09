@@ -1175,6 +1175,56 @@ class TestCheckUpcomingByes:
         warnings = check_upcoming_byes(df_no_bye, 3, lookahead_weeks=2, lineup=lineup)
         assert len(warnings) == 0
 
+    def test_boundary_zero_not_flagged_without_after_week(self, mock_df, mock_config):
+        """A zero projection at the season boundary (Week 18) must not be
+        flagged as a bye because there's no Week 19 to confirm the sandwich
+        pattern — be conservative and require both a prior and after week."""
+        from run_weekly import build_positions_config
+        from decision_engine import recommend_lineup
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        # Set Week 18 to 0 (boundary — no Week 19 exists to confirm a bye)
+        df_boundary = mock_df.copy()
+        for col in [f"Week {w}" for w in range(4, 19)]:
+            df_boundary[col] = 10.0
+        df_boundary.loc[df_boundary["Name"] == "Josh Allen", "Week 18"] = 0
+
+        warnings = check_upcoming_byes(df_boundary, 3, lookahead_weeks=15, lineup=lineup)
+        allen_warnings = [w for w in warnings if w.player == "Josh Allen"]
+        assert len(allen_warnings) == 0
+
+    def test_zero_flagged_only_when_sandwiched(self, mock_df, mock_config):
+        """A zero projection is only flagged as a bye when there's a normal
+        projection both before and after it within the available data."""
+        from run_weekly import build_positions_config
+        from decision_engine import recommend_lineup
+        positions_config = build_positions_config(mock_config)
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+        lineup = recommend_lineup(mock_df, roster, positions_config, 3)
+
+        # Week 6 = 0, Week 5 = non-zero, Week 7 = non-zero -> genuine sandwich
+        df_sandwich = mock_df.copy()
+        for col in [f"Week {w}" for w in range(4, 19)]:
+            df_sandwich[col] = 10.0
+        df_sandwich.loc[df_sandwich["Name"] == "Josh Allen", "Week 6"] = 0
+
+        warnings = check_upcoming_byes(df_sandwich, 3, lookahead_weeks=3, lineup=lineup)
+        allen_warnings = [w for w in warnings if w.player == "Josh Allen"]
+        assert len(allen_warnings) == 1
+        assert allen_warnings[0].bye_week == 6
+
+        # Week 4 = 0 but Week 5 and later are all 0 (no after week) -> not a bye
+        df_no_after = mock_df.copy()
+        for col in [f"Week {w}" for w in range(4, 19)]:
+            df_no_after[col] = 0.0
+        df_no_after.loc[df_no_after["Name"] == "Josh Allen", "Week 4"] = 0
+
+        warnings = check_upcoming_byes(df_no_after, 3, lookahead_weeks=2, lineup=lineup)
+        allen_warnings = [w for w in warnings if w.player == "Josh Allen"]
+        assert len(allen_warnings) == 0
+
 
 # --- Position-Differentiated Streaming Thresholds ---
 
