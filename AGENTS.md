@@ -135,6 +135,10 @@ An investigation (see git history / prior session) confirmed:
   `executor.py` stubs exist so the seam is ready, but implementing real API calls is
   future work, not a default task. Don't build this unless explicitly asked to.
 
+## Git Remote
+
+The repository's `origin` remote points to `https://github.com/fq4/colorpicker.git` — this is the correct upstream for this project. Do not change it.
+
 ## Testing
 
 Always run the full suite after any change, not just tests for what you touched:

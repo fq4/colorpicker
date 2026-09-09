@@ -743,7 +743,7 @@ def recommend_adds_drops(
         recs.append(rec)
 
     # Sort: non-flagged first by VOR gain descending, then flagged
-    recs.sort(key=lambda r: (r.flagged, -(r.vor_gain or 0)))
+    recs.sort(key=lambda r: (r.flagged, -(r.vor_gain if r.vor_gain is not None else 0)))
 
     return recs
 
@@ -1316,19 +1316,15 @@ def _generate_comparison_notes(moves, original_lineup, final_lineup=None):
             slot = matching_starter.slot
             if add_proj > starter_proj:
                 notes.append(
-                    rec.add + chr(32)+chr(40)+add_pos_clean+chr(44)+chr(32)+str(add_proj)+chr(41)+chr(32)+chr(114)+chr(101)+chr(112)+chr(108)+chr(97)+chr(99)+chr(101)+chr(115)+chr(32)
-                    + starter_name + chr(32)+chr(40)+slot+chr(44)+chr(32)+str(starter_proj)+chr(41)+chr(32)+chr(45)+chr(32)+chr(104)+chr(105)+chr(103)+chr(104)+chr(101)+chr(114)+chr(32)+chr(112)+chr(114)+chr(111)+chr(106)+chr(101)+chr(99)+chr(116)+chr(105)+chr(111)+chr(110)
+                    f"{rec.add} ({add_pos_clean}, {add_proj}) replaces {starter_name} ({slot}, {starter_proj}) - higher projection"
                 )
             else:
                 notes.append(
-                    starter_name + chr(32)+chr(40)+slot+chr(44)+chr(32)+str(starter_proj)+chr(41)+chr(32)+chr(115)+chr(116)+chr(97)+chr(114)+chr(116)+chr(115)+chr(32)+chr(111)+chr(118)+chr(101)+chr(114)+chr(32)
-                    + rec.add + chr(32)+chr(40)+add_pos_clean+chr(44)+chr(32)+str(add_proj)+chr(41)+chr(32)+chr(45)+chr(32)+chr(104)+chr(105)+chr(103)+chr(104)+chr(101)+chr(114)+chr(32)+chr(112)+chr(114)+chr(111)+chr(106)+chr(101)+chr(99)+chr(116)+chr(105)+chr(111)+chr(110)+chr(44)+chr(32)
-                    + rec.add + chr(32)+chr(111)+chr(110)+chr(32)+chr(98)+chr(101)+chr(110)+chr(99)+chr(104)
+                    f"{starter_name} ({slot}, {starter_proj}) starts over {rec.add} ({add_pos_clean}, {add_proj}) - higher projection, {rec.add} on bench"
                 )
         else:
             notes.append(
-                rec.add + chr(34)+chr(32)+chr(40)+add_pos_clean+chr(44)+chr(32)+str(add_proj)+chr(41)+chr(32)+chr(97)+chr(100)+chr(100)+chr(101)+chr(100)+chr(32)+chr(116)+chr(111)+chr(32)+chr(98)+chr(101)+chr(110)+chr(99)+chr(104)+chr(32)+chr(45)+chr(32)+chr(34)
-                + chr(110)+chr(111)+chr(32)+chr(115)+chr(116)+chr(97)+chr(114)+chr(116)+chr(101)+chr(114)+chr(32)+chr(97)+chr(116)+chr(32)+chr(115)+chr(97)+chr(109)+chr(101)+chr(32)+chr(112)+chr(111)+chr(115)+chr(105)+chr(116)+chr(105)+chr(111)+chr(110)+chr(32)+chr(116)+chr(111)+chr(32)+chr(99)+chr(111)+chr(109)+chr(112)+chr(101)+chr(116)+chr(101)+chr(32)+chr(119)+chr(105)+chr(116)+chr(104)+chr(34)
+                f"{rec.add} ({add_pos_clean}, {add_proj}) added to bench - no starter at same position to compete with"
             )
 
     # Pass 2: intra-roster bench upgrades — detect when an existing bench

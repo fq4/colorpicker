@@ -1990,3 +1990,61 @@ class TestWorstVorTransparencyNote:
         # No bench QB candidates exist (only Allen as starter + IR QB),
         # so the transparency note should not appear.
         assert "Note:" not in recs[0].reason
+
+class TestNegativeVorFlaggedFiltering:
+    """Tests for negative-VOR filtering in run_weekly.py — flagged items
+    should still be filtered out of the main recommended list and shown
+    separately under 'Not Recommended'."""
+
+    def test_negative_vor_flagged_items_filtered_out(
+        self, mock_df, mock_config
+    ):
+        """Recommendations with negative VOR gain that are flagged should
+        be excluded from the main recommended list and appear in 'Not Recommended'."""
+        from unittest.mock import patch
+        import pandas as pd
+        from tests.conftest import _make_player
+        from decision_engine import get_my_roster
+
+        config = dict(mock_config)
+
+        # Add a bench player with very low VOR that optimizer might drop
+        low_vor_row = _make_player(
+            60, "Low VOR Bench RB", "FA", "RB",
+            mock_config["team_name"], mock_config["team_id"],
+            "", "1.0", 2.0, -10.0,
+        )
+        df_mod = pd.concat([mock_df, pd.DataFrame([low_vor_row])], ignore_index=True)
+        roster = get_my_roster(df_mod, mock_config["team_name"], 3)
+
+        # Optimizer returns a negative-VOR recommendation (flagged)
+        fake_opt = pd.DataFrame({
+            "Add": ["Tyler Shough (QB, NO)"],
+            "Drop": ["Low VOR Bench RB (RB, FA)"],
+            "VOR": [-5.0],  # Negative VOR gain
+        })
+
+        fake_add_player = pd.Series({
+            "Name": "Tyler Shough", "Team": "NO", "Position": "QB",
+            "Status": "", "% Owned": "41", "Week 3": 17.8, "VOR": 9.2,
+        })
+        fake_drop_player = pd.Series({
+            "Name": "Low VOR Bench RB", "Team": "FA", "Position": "RB",
+            "Status": "", "% Owned": "1.0", "Week 3": 2.0, "VOR": -10.0,
+        })
+
+        def fake_lookup(df, name, position=None):
+            if name == "Tyler Shough":
+                return fake_add_player
+            elif name == "Low VOR Bench RB":
+                return fake_drop_player
+            return None
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", side_effect=fake_lookup):
+                recs = recommend_adds_drops(df_mod, roster, 3, config)
+
+        # The recommendation should have negative VOR and be flagged
+        assert len(recs) == 1
+        assert recs[0].vor_gain == -5.0
+        assert recs[0].flagged is True
