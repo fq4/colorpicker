@@ -37,6 +37,7 @@ from decision_engine import (
     get_starting_slots,
     get_starters_count,
     _parse_optimizer_player,
+    _lookup_player,
     _is_ir,
     _week_col,
 )
@@ -450,6 +451,56 @@ class TestParseOptimizerPlayer:
     def test_parse_none(self):
         name, pos, owner = _parse_optimizer_player(None)
         assert name is None
+
+
+class TestLookupPlayerDisambiguation:
+    def test_prefers_exact_case_insensitive_match_over_substring(self, mock_df):
+        """An exact case-insensitive name match should win over a longer
+        substring match."""
+        df = mock_df.copy()
+        # Add a longer name that contains the query as a substring
+        extra = df[df["Name"] == "Josh Allen"].iloc[0].copy()
+        extra["Name"] = "Josh Allen Jr"
+        df = pd.concat([df, pd.DataFrame([extra])], ignore_index=True)
+
+        result = _lookup_player(df, "josh allen")
+        assert result["Name"] == "Josh Allen"
+
+    def test_prefers_closest_string_length_among_substring_matches(self, mock_df):
+        """When multiple substring matches exist, prefer the one whose name
+        length is closest to the query."""
+        df = mock_df.copy()
+        # Add two names containing "Allen" as a substring with different lengths
+        base = df[df["Name"] == "Josh Allen"].iloc[0].copy()
+        short = base.copy()
+        short["Name"] = "Allen"
+        long = base.copy()
+        long["Name"] = "Josh Allen The Third"
+        df = pd.concat([df, pd.DataFrame([short, long])], ignore_index=True)
+
+        result = _lookup_player(df, "Allen")
+        assert result["Name"] == "Allen"
+
+    def test_logs_warning_when_still_ambiguous(self, mock_df):
+        """When disambiguation still leaves multiple matches, log a warning
+        and return the first match as a last resort."""
+        from unittest.mock import patch
+
+        df = mock_df.copy()
+        # Add two names with identical length containing the query
+        base = df[df["Name"] == "Josh Allen"].iloc[0].copy()
+        a = base.copy()
+        a["Name"] = "Allen X"
+        b = base.copy()
+        b["Name"] = "Allen Y"
+        df = pd.concat([df, pd.DataFrame([a, b])], ignore_index=True)
+
+        with patch("decision_engine.logger.warning") as mock_warning:
+            result = _lookup_player(df, "Allen")
+
+        assert result["Name"] in ("Allen X", "Allen Y")
+        mock_warning.assert_called_once()
+        assert "Ambiguous player lookup" in mock_warning.call_args[0][0]
 
 
 # ── Integration: full pipeline (mocked) ──────────────────────────────────

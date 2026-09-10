@@ -523,14 +523,46 @@ def _parse_optimizer_player(text: Optional[str]) -> tuple[Optional[str], Optiona
 
 def _lookup_player(df: pd.DataFrame, name: str, position: Optional[str] = None) -> Optional[pd.Series]:
     """Look up a player in the df by name (and optionally position)."""
-    matches = df[df["Name"] == name]
+    query = str(name).strip()
+    query_base = query.split("(")[0].strip()
+
+    # Prefer an exact case-insensitive match over any substring match.
+    matches = df[df["Name"].str.casefold() == query.casefold()]
     if position:
         matches = matches[matches["Position"].str.contains(position, na=False)]
-    if len(matches) == 0:
-        # Try fuzzy match — remove suffixes like " Jr." etc.
-        matches = df[df["Name"].str.contains(re.escape(name.split("(")[0].strip()), na=False, regex=True)]
+
+    if len(matches) == 1:
+        return matches.iloc[0]
+
+    # Fall back to fuzzy substring matching.
+    matches = df[df["Name"].str.contains(re.escape(query_base), na=False, regex=True)]
+    if position:
+        matches = matches[matches["Position"].str.contains(position, na=False)]
+
     if len(matches) == 0:
         return None
+
+    # Among fuzzy matches, prefer an exact case-insensitive match.
+    exact_ci = matches[matches["Name"].str.casefold() == query_base.casefold()]
+    if len(exact_ci) == 1:
+        return exact_ci.iloc[0]
+    if len(exact_ci) > 1:
+        matches = exact_ci
+
+    # If multiple substring matches remain, prefer the closest string length
+    # to the query as a proxy for the most likely actual player.
+    if len(matches) > 1:
+        matches = matches.copy()
+        matches["_len_diff"] = (matches["Name"].str.len() - len(query_base)).abs()
+        min_diff = matches["_len_diff"].min()
+        matches = matches[matches["_len_diff"] == min_diff]
+
+        if len(matches) > 1:
+            logger.warning(
+                f"Ambiguous player lookup for '{name}': {len(matches)} matches "
+                f"({', '.join(matches['Name'].tolist())}); using first match"
+            )
+
     return matches.iloc[0]
 
 
