@@ -28,6 +28,7 @@ bench_depth_minimums:
   TE: 0
 
 # injury statuses that prevent a player from being used as bench depth
+# (true IR-slot eligibility only — "O" is a game-day designation, not IR)
 ir_statuses:
   - "IR"
   - "IR-R"
@@ -37,7 +38,6 @@ ir_statuses:
   - "COVID"
   - "PUP"
   - "PUP-R"
-  - "O"
 
 notify:
   method: "console"   # console | email | none (extend later)

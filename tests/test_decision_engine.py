@@ -414,10 +414,11 @@ class TestPositionHelpers:
         assert "W/R" not in counts
 
     def test_is_ir(self):
-        ir_statuses = {"IR", "IR-R", "NFI", "NFI-R", "NFI-A", "COVID", "PUP", "PUP-R", "O"}
+        ir_statuses = {"IR", "IR-R", "NFI", "NFI-R", "NFI-A", "COVID", "PUP", "PUP-R"}
         assert _is_ir("IR", ir_statuses) is True
         assert _is_ir("IR-R", ir_statuses) is True
         assert _is_ir("Q", ir_statuses) is False
+        assert _is_ir("O", ir_statuses) is False
         assert _is_ir("", ir_statuses) is False
         assert _is_ir(None, ir_statuses) is False
         assert _is_ir("NFI-R", ir_statuses) is True

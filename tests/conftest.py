@@ -114,7 +114,7 @@ def mock_config() -> dict:
         "min_vor_loss_to_flag_drop": -50.0,
         "min_usable_projection": 1.0,
         "bench_depth_minimums": {"RB": 1, "WR": 1, "QB": 1, "TE": 0},
-        "ir_statuses": ["IR", "IR-R", "NFI", "NFI-R", "NFI-A", "COVID", "PUP", "PUP-R", "O"],
+        "ir_statuses": ["IR", "IR-R", "NFI", "NFI-R", "NFI-A", "COVID", "PUP", "PUP-R"],
         "notify": {"method": "console"},
     }
 
