@@ -1940,6 +1940,90 @@ class TestBenchDepthAwareDeprioritization:
         assert "Woody Marks" in rec.alternative
         assert "RB" in rec.alternative
 
+    def test_alternative_suggests_best_non_flagged_free_agent_for_gapped_position(
+        self, mock_df, mock_config
+    ):
+        """When only one position is gapped, the alternative should point to the
+        best non-flagged free agent at that exact position."""
+        import pandas as pd
+        from unittest.mock import patch
+
+        config = dict(mock_config)
+        config["bench_depth_minimums"] = {"WR": 2}
+
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+
+        fake_opt = pd.DataFrame({
+            "Add": ["Some New DEF (DEF, XYZ)"],
+            "Drop": [""],
+            "VOR": [-2.0],
+        })
+
+        fake_player = pd.Series({
+            "Name": "Some New DEF",
+            "Team": "XYZ",
+            "Position": "DEF",
+            "Status": "",
+            "% Owned": 5,
+            "Week 3": 5.0,
+            "VOR": -2.0,
+        })
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", return_value=fake_player):
+                recs = recommend_adds_drops(mock_df, roster, 3, config)
+
+        flagged_recs = [r for r in recs if r.flagged and "bench gap remains unaddressed" in (r.flag_reason or "")]
+        assert len(flagged_recs) >= 1
+        rec = flagged_recs[0]
+
+        assert rec.alternative is not None
+        assert "Jayden Reed" in rec.alternative
+        assert "WR" in rec.alternative
+        assert "13.8" in rec.alternative
+        assert " | Alternative:" in rec.flag_reason
+
+    def test_alternative_is_none_when_no_free_agents_at_gapped_position(
+        self, mock_df, mock_config
+    ):
+        """When the gapped position has no free agents, rec.alternative must stay
+        None and flag_reason must not include an 'Alternative:' clause."""
+        import pandas as pd
+        from unittest.mock import patch
+
+        config = dict(mock_config)
+        config["bench_depth_minimums"] = {"WR": 2}
+
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+
+        fake_opt = pd.DataFrame({
+            "Add": ["Some New DEF (DEF, XYZ)"],
+            "Drop": [""],
+            "VOR": [-2.0],
+        })
+
+        fake_player = pd.Series({
+            "Name": "Some New DEF",
+            "Team": "XYZ",
+            "Position": "DEF",
+            "Status": "",
+            "% Owned": 5,
+            "Week 3": 5.0,
+            "VOR": -2.0,
+        })
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", return_value=fake_player):
+                with patch("decision_engine.rank_free_agents", return_value=pd.DataFrame()):
+                    recs = recommend_adds_drops(mock_df, roster, 3, config)
+
+        flagged_recs = [r for r in recs if r.flagged and "bench gap remains unaddressed" in (r.flag_reason or "")]
+        assert len(flagged_recs) >= 1
+        rec = flagged_recs[0]
+
+        assert rec.alternative is None
+        assert "Alternative:" not in (rec.flag_reason or "")
+
 
 class TestWorstVorTransparencyNote:
     def test_note_appears_when_gap_exceeds_threshold(self, mock_df, mock_config):
