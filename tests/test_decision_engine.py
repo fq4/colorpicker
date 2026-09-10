@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 import pytest
 
-from data_layer import get_team_name_from_id
+from data_layer import get_team_name_from_id, save_weekly_cache
 from decision_engine import (
     get_my_roster,
     flag_bench_depth_gaps,
@@ -50,6 +50,27 @@ WEEK = 3
 
 def get_week_col(df: pd.DataFrame, week: int = WEEK) -> str:
     return f"Week {week}"
+
+
+# ── data_layer ────────────────────────────────────────────────────────────
+
+
+class TestDataLayer:
+    def test_save_weekly_cache_writes_canonical_location(self, tmp_path, mock_df):
+        """save_weekly_cache should write directly to the app's canonical
+        league-scoped cache location, not via ffbot.save()."""
+        from unittest.mock import patch
+
+        with patch("data_layer.ffbot.save") as mock_save:
+            path = save_weekly_cache(
+                mock_df, 3, data_dir=str(tmp_path), league_id=492312
+            )
+
+        mock_save.assert_not_called()
+        assert "league_492312_week_3_" in path
+        assert path.endswith(".csv")
+        import os
+        assert os.path.exists(path)
 
 
 # ── get_my_roster ────────────────────────────────────────────────────────

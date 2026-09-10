@@ -25,14 +25,15 @@ def load_config(config_path=DEFAULT_CONFIG_PATH):
 
 
 def save_weekly_cache(df, week, data_dir=DATA_DIR, league_id=None):
-    """Cache scraped data to disk via ffbot.save().
+    """Cache scraped data to disk with the app's canonical filename.
 
-    Uses ffbot's own save function for format compatibility.
+    ffbot.save() hardcodes its own data/ directory and filename format, which
+    is disconnected from the app's league-scoped cache layout. The app writes
+    its own CSV directly to the correct location instead.
     """
     os.makedirs(data_dir, exist_ok=True)
-    ffbot.save(df, week)
 
-    # Also save with a week-prefixed name for easier programmatic lookup
+    # Save with a week-prefixed, league-scoped name for programmatic lookup
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     prefix = f"league_{league_id}_" if league_id is not None else ""
     filename = os.path.join(data_dir, f"{prefix}week_{week}_{timestamp}.csv")
