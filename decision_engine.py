@@ -45,6 +45,7 @@ class AddDropRecommendation:
     confidence: str = "medium"  # "high", "medium", "low"
     flagged: bool = False
     flag_reason: Optional[str] = None
+    alternative: Optional[str] = None  # suggested alternative when flagged for gap mismatch
     dry_run: bool = True
 
 
@@ -730,6 +731,34 @@ def recommend_adds_drops(
                 f"your {gap_list} bench gap remains unaddressed — consider "
                 f"whether a {gap_list} free agent better serves your need this week"
             ).strip(" |")
+
+            # Look up the best available non-flagged free agent at the gapped
+            # position(s) and surface it as a concrete alternative.
+            best_alt: Optional[pd.Series] = None
+            best_alt_pos: Optional[str] = None
+            for gap_pos in sorted(depth_gap_positions):
+                fa_df = rank_free_agents(df, gap_pos, current_week)
+                if fa_df.empty:
+                    continue
+                # Prefer non-flagged free agents; fall back to any if none are clean
+                clean = fa_df[fa_df.get("flagged", "") == ""]
+                candidates = clean if len(clean) > 0 else fa_df
+                if len(candidates) > 0:
+                    candidate = candidates.iloc[0]
+                    proj = _safe_float(candidate.get(week_col)) or 0.0
+                    if best_alt is None or proj > (_safe_float(best_alt.get(week_col)) or 0.0):
+                        best_alt = candidate
+                        best_alt_pos = gap_pos
+
+            if best_alt is not None:
+                alt_name = str(best_alt.get("Name", ""))
+                alt_proj = _safe_float(best_alt.get(week_col)) or 0.0
+                rec.alternative = (
+                    f"Alternative: instead of this, consider adding "
+                    f"{alt_name} ({best_alt_pos}, {alt_proj:.1f} pts) to address "
+                    f"your {best_alt_pos} depth gap"
+                )
+                rec.flag_reason = (rec.flag_reason or "") + f" | {rec.alternative}"
 
         # --- Build plain-English reason ---
         rec.reason = _build_add_drop_reason(

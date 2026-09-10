@@ -1932,6 +1932,13 @@ class TestBenchDepthAwareDeprioritization:
         # The DEF add should be flagged with the deprioritization message
         flagged_recs = [r for r in recs if r.flagged and "bench gap remains unaddressed" in (r.flag_reason or "")]
         assert len(flagged_recs) >= 1
+        rec = flagged_recs[0]
+        # When a real free agent exists at a gapped position, it should be
+        # suggested as a concrete alternative. The alternative points to the
+        # best available free agent across all gapped positions.
+        assert rec.alternative is not None
+        assert "Woody Marks" in rec.alternative
+        assert "RB" in rec.alternative
 
 
 class TestWorstVorTransparencyNote:
