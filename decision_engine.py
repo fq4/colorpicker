@@ -955,7 +955,9 @@ def recommend_lineup(
             # Find bench alternative if flagged
             bench_alt: Optional[LineupSlot] = None
             if is_flagged:
-                bench_alt = _find_bench_alternative(players, used_names, compatible, week_col)
+                bench_alt = _find_bench_alternative(
+                    players, used_names, compatible, week_col, ir_statuses
+                )
 
             # Number repeated slots (WR1, WR2, RB1, RB2)
             if slot_type in ("WR", "RB"):
@@ -1054,22 +1056,53 @@ def _find_bench_alternative(
     used_names: set[str],
     compatible: set[str],
     week_col: str,
+    ir_statuses: set[str],
 ) -> Optional[LineupSlot]:
-    """Find the best bench player who can fill a given slot type."""
+    """Find the best bench player who can fill a given slot type.
+
+    Excludes players whose Status is in the configured IR-status set, and
+    prefers candidates with a non-zero projection over zero/null projections.
+    Returns None when no genuinely usable alternative exists.
+    """
+    candidates: list[tuple[pd.Series, float]] = []
     for _, row in players.iterrows():
         if row["Name"] in used_names:
             continue
+        status_val = _safe_status(row.get("Status")) or ""
+        if status_val.strip() in ir_statuses:
+            continue
         player_positions = {p.strip() for p in str(row["Position"]).split(",")}
         if player_positions & compatible:
+            proj = _safe_float(row.get(week_col))
+            candidates.append((row, proj if proj is not None else 0.0))
+
+    # Prefer a candidate with a real (non-zero) projection.
+    for row, proj in candidates:
+        if proj > 0:
             return LineupSlot(
                 slot="BN",
                 player=str(row["Name"]),
                 team=str(row["Team"]),
                 position=str(row["Position"]),
-                projection=_safe_float(row.get(week_col)) or 0.0,
+                projection=proj,
                 vor=_safe_float(row.get("VOR")) or 0.0,
                 status=_safe_status(row.get("Status")) or "",
             )
+
+    # Fall back to a zero/null-projection candidate only if it's genuinely
+    # usable (not IR-status). Otherwise there's no valid alternative.
+    if candidates:
+        row, proj = candidates[0]
+        return LineupSlot(
+            slot="BN",
+            player=str(row["Name"]),
+            team=str(row["Team"]),
+            position=str(row["Position"]),
+            projection=proj,
+            vor=_safe_float(row.get("VOR")) or 0.0,
+            status=_safe_status(row.get("Status")) or "",
+        )
+
     return None
 
 

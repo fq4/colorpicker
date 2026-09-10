@@ -223,6 +223,53 @@ class TestRecommendLineup:
         assert "Robbie Ouzts" not in starter_names
         assert "Second IR Player" not in starter_names
 
+    def test_bench_alternative_excludes_ir_status_players(self, mock_df, mock_config, positions_config):
+        """A bench player with an IR-status designation must not be suggested
+        as an alternative for a flagged starter."""
+        roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
+        # Make Tyreek Hill the only WR starter candidate and mark him Q.
+        # Remove all other WRs so the only WR-compatible bench option is IR.
+        hill_row = roster[roster["Name"] == "Tyreek Hill"].iloc[0].copy()
+        roster = roster[roster["Position"].str.contains("WR") == False].copy()
+        hill_row["Status"] = "Q"
+        roster = pd.concat([roster[roster["Name"] != "Tyreek Hill"], pd.DataFrame([hill_row])], ignore_index=True)
+
+        ir_wr = hill_row.copy()
+        ir_wr["Name"] = "IR Bench WR"
+        ir_wr["Status"] = "IR"
+        ir_wr["Week 3"] = 5.0
+        roster = pd.concat([roster, pd.DataFrame([ir_wr])], ignore_index=True)
+
+        lineup = recommend_lineup(mock_df, roster, positions_config, WEEK)
+        flagged = [s for s in lineup.flagged_starters if s.player == "Tyreek Hill"]
+        assert len(flagged) == 1
+        assert flagged[0].bench_alternative is None
+
+    def test_bench_alternative_prefers_nonzero_projection(self, mock_df, mock_config, positions_config):
+        """When multiple bench alternatives exist, prefer one with a non-zero
+        projection over one with a zero/null projection."""
+        roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
+        hill_row = roster[roster["Name"] == "Tyreek Hill"].iloc[0].copy()
+        roster = roster[roster["Position"].str.contains("WR") == False].copy()
+        hill_row["Status"] = "Q"
+        roster = pd.concat([roster[roster["Name"] != "Tyreek Hill"], pd.DataFrame([hill_row])], ignore_index=True)
+
+        zero_wr = hill_row.copy()
+        zero_wr["Name"] = "Zero Bench WR"
+        zero_wr["Status"] = ""
+        zero_wr["Week 3"] = 0.0
+        good_wr = hill_row.copy()
+        good_wr["Name"] = "Good Bench WR"
+        good_wr["Status"] = ""
+        good_wr["Week 3"] = 8.0
+        roster = pd.concat([roster, pd.DataFrame([zero_wr, good_wr])], ignore_index=True)
+
+        lineup = recommend_lineup(mock_df, roster, positions_config, WEEK)
+        flagged = [s for s in lineup.flagged_starters if s.player == "Tyreek Hill"]
+        assert len(flagged) == 1
+        assert flagged[0].bench_alternative == "Good Bench WR"
+        assert flagged[0].bench_alt_projection > 0
+
 
 # ── recommend_adds_drops ───────────────────────────────────────────────────
 
