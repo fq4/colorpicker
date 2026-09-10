@@ -1082,6 +1082,36 @@ class TestCLIOverridesAndFilenames:
         assert "league_492312_team_7_week_3.md" in path
         assert os.path.exists(path)
 
+    def test_run_weekly_attaches_actual_week_to_report(self, mock_df, mock_config):
+        """run_weekly should attach the actual week it analyzed to the report
+        object, so main() has one source of truth for the report header."""
+        from run_weekly import run_weekly
+        from unittest.mock import patch
+
+        # Mock the data layer to return week 6 data while ffbot.current_week
+        # reports a different week (7). The report must use the fetched week.
+        with patch("run_weekly.get_latest_cached_or_fresh", return_value=(mock_df, 6)):
+            with patch("ffbot.current_week", return_value=7):
+                report = run_weekly(mock_config, force_refresh=False)
+
+        assert report.week == 6
+
+    def test_report_week_matches_analysis_week_from_cached_data(self, mock_df, mock_config):
+        """The report should use the same week the pipeline actually analyzed,
+        not an independently re-queried ffbot.current_week()."""
+        from unittest.mock import patch
+        from run_weekly import run_weekly
+
+        config = dict(mock_config)
+        config["league_id"] = 492312
+        config["team_id"] = 7
+
+        with patch("run_weekly.get_latest_cached_or_fresh", return_value=(mock_df, 5)):
+            with patch("ffbot.current_week", return_value=3):
+                report = run_weekly(config, week=None, force_refresh=False)
+
+        assert report.week == 5
+
 
 class TestPositionsOverride:
     def test_custom_positions_changes_roster_limit(self, mock_df, mock_config):

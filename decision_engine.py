@@ -136,6 +136,7 @@ class RecommendationReport:
     add_drop_recs: list[AddDropRecommendation] = field(default_factory=list)
     low_value_recs: list[AddDropRecommendation] = field(default_factory=list)
     action_plan: Optional[ActionPlan] = None
+    week: Optional[int] = None
 
 
 # --------------------------------------------------------------------------- #

@@ -172,6 +172,7 @@ def run_weekly(config: dict, week: int | None = None, force_refresh: bool = Fals
         add_drop_recs=add_drop_recs,
         low_value_recs=low_value,
         action_plan=action_plan,
+        week=current_week,
     )
 
     return report
@@ -264,9 +265,9 @@ def main():
     # Run pipeline (run_weekly will derive team_name from team_id via the df)
     report = run_weekly(config, week=args.week, force_refresh=args.force_refresh)
 
-    # Get the actual week used
+    # Use the same week the pipeline actually analyzed — one source of truth
     import ffbot
-    actual_week = args.week if args.week is not None else ffbot.current_week()
+    actual_week = report.week if report.week is not None else ffbot.current_week()
 
     # Generate reports
     terminal_report = build_terminal_report(
