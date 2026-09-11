@@ -137,15 +137,21 @@ def run_weekly(config: dict, week: int | None = None, force_refresh: bool = Fals
 
     # Optional hypothetical drop (in-memory only, never touches Yahoo or cache)
     if hypothetical_drop:
+        df = df.copy()
+        my_roster = get_my_roster(df, team_name, current_week)
         mask = my_roster["Name"].str.lower() != hypothetical_drop.strip().lower()
         removed = int((~mask).sum())
         my_roster = my_roster[mask].reset_index(drop=True)
-        if removed == 0:
+
+        if removed > 0:
+            logger.info(f"Hypothetical drop: removed '{hypothetical_drop}' ({removed} player removed)")
+            player_mask = df["Name"].str.lower() == hypothetical_drop.strip().lower()
+            df.loc[player_mask, "Owner"] = "Free Agent"
+            df.loc[player_mask, "Owner ID"] = float("nan")
+        else:
             logger.warning(
                 f"Hypothetical drop '{hypothetical_drop}' not found on roster; proceeding with full roster"
             )
-        else:
-            logger.info(f"Hypothetical drop: removed '{hypothetical_drop}' ({removed} player removed)")
 
     # 3. Depth warnings
     positions_config = build_positions_config(config)

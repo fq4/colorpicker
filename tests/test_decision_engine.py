@@ -2430,3 +2430,29 @@ class TestHypotheticalDrop:
         assert report.hypothetical_drop is None
         if report.my_roster is not None:
             assert target_name in report.my_roster["Name"].values
+
+    def test_hypothetical_drop_player_not_recommended_as_drop_target(
+        self, mock_df, mock_config
+    ):
+        """After a hypothetical drop, that player must never appear as a Drop
+        target in any recommendation. They may appear as an Add target because
+        they now look like a free agent in the modified df."""
+        from unittest.mock import patch
+        from run_weekly import run_weekly
+
+        target_name = "Jordan Addison"
+        with patch("run_weekly.get_latest_cached_or_fresh", return_value=(mock_df, 3)):
+            with patch("ffbot.current_week", return_value=3):
+                report = run_weekly(
+                    mock_config,
+                    week=None,
+                    force_refresh=False,
+                    hypothetical_drop=target_name,
+                )
+
+        all_recs = (report.add_drop_recs or []) + (report.low_value_recs or [])
+        for rec in all_recs:
+            assert rec.drop != target_name, (
+                f"Hypothetically-dropped player '{target_name}' should not appear as a "
+                f"Drop target, but was recommended in action='{rec.action}'"
+            )
