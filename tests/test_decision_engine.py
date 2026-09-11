@@ -362,6 +362,110 @@ class TestRecommendAddsDrops:
                 assert rec.flagged
                 assert 'bench depth gap' in (rec.flag_reason or '').lower()
 
+    def test_same_position_swap_fixes_gap_not_flagged(
+        self, mock_df, mock_config
+    ):
+        """When a WR bench-depth gap exists and the recommendation swaps a
+        genuinely unusable WR (0.0 proj) for a genuinely usable one, the
+        simulated post-move roster must reflect BOTH the drop and the add
+        so the gap is recognised as fixed — no 'exacerbates' flag."""
+        import pandas as pd
+        from unittest.mock import patch
+        from tests.conftest import _make_player
+        from run_weekly import build_positions_config
+
+        config = dict(mock_config)
+        config["bench_depth_minimums"] = {"WR": 2}
+
+        # Add a useless bench WR (0.0 proj) to our team
+        useless_wr = _make_player(
+            90, "Useless WR", "FA", "WR",
+            mock_config["team_name"], mock_config["team_id"],
+            "", "0.5", 0.0, -5.0,
+        )
+        df_mod = pd.concat([mock_df, pd.DataFrame([useless_wr])], ignore_index=True)
+
+        roster = get_my_roster(df_mod, mock_config["team_name"], WEEK)
+        gaps = flag_bench_depth_gaps(roster, build_positions_config(config))
+        assert "WR" in {w.position for w in gaps}, "Pre-condition: WR bench gap must exist"
+
+        # Optimizer says: drop Useless WR (0.0), add Jayden Reed (13.8 — usable)
+        fake_opt = pd.DataFrame({
+            "Add": ["Jayden Reed (WR, GB)"],
+            "Drop": ["Useless WR (WR, FA)"],
+            "VOR": [8.0],
+        })
+
+        def fake_lookup(df, name, position=None):
+            if name == "Jayden Reed":
+                row = df[df["Name"] == "Jayden Reed"].iloc[0]
+                return row
+            elif name == "Useless WR":
+                row = df[df["Name"] == "Useless WR"].iloc[0]
+                return row
+            return None
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", side_effect=fake_lookup):
+                recs = recommend_adds_drops(df_mod, roster, WEEK, config)
+
+        target_rec = next(r for r in recs if r.drop == "Useless WR")
+        assert target_rec.flagged is False, (
+            f"Drop+add swap fixing the gap should NOT be flagged, but flag_reason="
+            f"{target_rec.flag_reason!r}"
+        )
+        assert "exacerbates" not in (target_rec.flag_reason or "").lower()
+        assert "would create" not in (target_rec.flag_reason or "").lower()
+
+    def test_swap_to_equally_unusable_is_flagged(
+        self, mock_df, mock_config
+    ):
+        """Dropping a usable WR for an equally unusable one must still be
+        flagged — the simulated roster correctly reflects both the drop and
+        the add, but neither is usable so the gap persists."""
+        import pandas as pd
+        from unittest.mock import patch
+        from tests.conftest import _make_player
+        from run_weekly import build_positions_config
+
+        config = dict(mock_config)
+        config["bench_depth_minimums"] = {"WR": 2}
+
+        # Add a useless bench WR (0.0 proj) to our team
+        useless_wr = _make_player(
+            90, "Useless WR", "FA", "WR",
+            mock_config["team_name"], mock_config["team_id"],
+            "", "0.5", 0.0, -5.0,
+        )
+        # Add a useless FA WR (0.0 proj) to be the incoming add
+        dead_fa = _make_player(
+            91, "Dead Weight FA", "FA", "WR",
+            "Free Agent", float("nan"), "", "0.2", 0.0, -6.0,
+        )
+        df_mod = pd.concat([mock_df, pd.DataFrame([useless_wr, dead_fa])], ignore_index=True)
+
+        roster = get_my_roster(df_mod, mock_config["team_name"], WEEK)
+        gaps = flag_bench_depth_gaps(roster, build_positions_config(config))
+        assert "WR" in {w.position for w in gaps}, "Pre-condition: WR bench gap must exist"
+
+        # Optimizer says: drop Jordan Addison (11.0 — usable), add Dead Weight FA (0.0)
+        fake_opt = pd.DataFrame({
+            "Add": ["Dead Weight FA (WR, FA)"],
+            "Drop": ["Jordan Addison (WR, MIN)"],
+            "VOR": [8.0],
+        })
+
+        def fake_lookup(df, name, position=None):
+            return df[df["Name"] == name].iloc[0]
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", side_effect=fake_lookup):
+                recs = recommend_adds_drops(df_mod, roster, WEEK, config)
+
+        target_rec = next(r for r in recs if r.drop == "Jordan Addison")
+        assert target_rec.flagged is True
+        assert "exacerbates" in (target_rec.flag_reason or "").lower()
+
     def test_low_vor_gain_shown_medium_confidence(self, mock_df, mock_config, positions_config):
         roster = get_my_roster(mock_df, mock_config['team_name'], WEEK)
         recs = recommend_adds_drops(mock_df, roster, WEEK, mock_config)

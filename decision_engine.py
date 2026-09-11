@@ -681,10 +681,17 @@ def recommend_adds_drops(
         if drop_player is not None:
             drop_positions = {p.strip() for p in str(drop_player["Position"]).split(",")}
 
-            # Simulate removing the drop player from the roster
+            # Simulate the FULL proposed transaction: remove the dropped player
+            # AND add the incoming add player, so the gap check reflects what
+            # the roster would actually look like after the move completes.
             simulated_roster = my_roster[
                 my_roster["Name"] != str(drop_player["Name"])
             ].copy()
+            if add_player is not None:
+                simulated_roster = pd.concat(
+                    [simulated_roster, add_player.to_frame().T],
+                    ignore_index=True,
+                )
             simulated_warnings = flag_bench_depth_gaps(simulated_roster, positions_config)
             simulated_gap_positions = {w.position for w in simulated_warnings}
 
@@ -694,7 +701,7 @@ def recommend_adds_drops(
                 if dp in new_gaps:
                     rec.flagged = True
                     flag_reasons.append(f"Dropping {dp} would create a bench depth gap")
-                elif dp in depth_gap_positions:
+                elif dp in depth_gap_positions and dp in simulated_gap_positions:
                     rec.flagged = True
                     flag_reasons.append(f"Dropping {dp} exacerbates existing bench depth gap")
 
