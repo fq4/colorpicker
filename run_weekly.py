@@ -82,7 +82,7 @@ def build_positions_config(config: dict) -> dict:
     }
 
 
-def run_weekly(config: dict, week: int | None = None, force_refresh: bool = False, log_path: str = "logs") -> RecommendationReport:
+def run_weekly(config: dict, week: int | None = None, force_refresh: bool = False, log_path: str = "logs", hypothetical_drop: str | None = None) -> RecommendationReport:
     """Execute the full weekly pipeline and return the recommendation report.
 
     1. Fetch or cache data
@@ -135,6 +135,18 @@ def run_weekly(config: dict, week: int | None = None, force_refresh: bool = Fals
     my_roster = get_my_roster(df, team_name, current_week)
     logger.info(f"Roster: {len(my_roster)} players for '{team_name}'")
 
+    # Optional hypothetical drop (in-memory only, never touches Yahoo or cache)
+    if hypothetical_drop:
+        mask = my_roster["Name"].str.lower() != hypothetical_drop.strip().lower()
+        removed = int((~mask).sum())
+        my_roster = my_roster[mask].reset_index(drop=True)
+        if removed == 0:
+            logger.warning(
+                f"Hypothetical drop '{hypothetical_drop}' not found on roster; proceeding with full roster"
+            )
+        else:
+            logger.info(f"Hypothetical drop: removed '{hypothetical_drop}' ({removed} player removed)")
+
     # 3. Depth warnings
     positions_config = build_positions_config(config)
     depth_warnings = flag_bench_depth_gaps(my_roster, positions_config)
@@ -173,6 +185,7 @@ def run_weekly(config: dict, week: int | None = None, force_refresh: bool = Fals
         low_value_recs=low_value,
         action_plan=action_plan,
         week=current_week,
+        hypothetical_drop=hypothetical_drop,
     )
 
     return report
@@ -239,6 +252,11 @@ def main():
         choices=["continual_rolling", "faab"],
         help="Override waiver_type from config.yaml for this run (display-only)"
     )
+    parser.add_argument(
+        "--hypothetical-drop", type=str, default=None,
+        dest="hypothetical_drop",
+        help="Simulate dropping a player from your roster for what-if analysis (does not change any data)"
+    )
     args = parser.parse_args()
 
     dry_run = args.dry_run or not args.execute
@@ -263,7 +281,7 @@ def main():
         config["waiver_type"] = args.waiver_type
 
     # Run pipeline (run_weekly will derive team_name from team_id via the df)
-    report = run_weekly(config, week=args.week, force_refresh=args.force_refresh)
+    report = run_weekly(config, week=args.week, force_refresh=args.force_refresh, hypothetical_drop=args.hypothetical_drop)
 
     # Use the same week the pipeline actually analyzed — one source of truth
     import ffbot

@@ -2024,6 +2024,51 @@ class TestBenchDepthAwareDeprioritization:
         assert rec.alternative is None
         assert "Alternative:" not in (rec.flag_reason or "")
 
+    def test_multiple_flags_are_joined_with_separator(
+        self, mock_df, mock_config
+    ):
+        """When multiple flag conditions fire, their reasons must be joined with
+        ' | ' and not mashed together without a separator."""
+        import pandas as pd
+        from unittest.mock import patch
+
+        config = dict(mock_config)
+        config["bench_depth_minimums"] = {"WR": 2}
+
+        roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+
+        fake_opt = pd.DataFrame({
+            "Add": ["Hurting QB (QB, XYZ)"],
+            "Drop": [""],
+            "VOR": [-3.0],
+        })
+
+        fake_player = pd.Series({
+            "Name": "Hurting QB",
+            "Team": "XYZ",
+            "Position": "QB",
+            "Status": "IR",
+            "% Owned": 5,
+            "Week 3": 5.0,
+            "VOR": -3.0,
+        })
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", return_value=fake_player):
+                recs = recommend_adds_drops(mock_df, roster, 3, config)
+
+        flagged_recs = [r for r in recs if r.flagged]
+        assert len(flagged_recs) >= 1
+        rec = flagged_recs[0]
+
+        # Both flags should be present and separated by ' | '
+        assert "Add target Hurting QB has injury status IR" in (rec.flag_reason or "")
+        assert "bench gap remains unaddressed" in (rec.flag_reason or "")
+        assert " | " in rec.flag_reason
+        # Make sure there's no mashed-together text like 'gapUses a bench slot'
+        assert "gapUses" not in (rec.flag_reason or "")
+        assert "IRUses" not in (rec.flag_reason or "")
+
 
 class TestWorstVorTransparencyNote:
     def test_note_appears_when_gap_exceeds_threshold(self, mock_df, mock_config):
@@ -2339,3 +2384,49 @@ class TestNegativeVorFlaggedFiltering:
         assert len(recs) == 1
         assert recs[0].vor_gain == -5.0
         assert recs[0].flagged is True
+
+
+class TestHypotheticalDrop:
+    def test_hypothetical_drop_removes_player_from_report_roster(
+        self, mock_df, mock_config
+    ):
+        """When --hypothetical-drop is provided, run_weekly should remove that
+        player from the in-memory roster before analysis and label the report."""
+        from unittest.mock import patch
+        from run_weekly import run_weekly
+
+        target_name = "Jordan Addison"
+        with patch("run_weekly.get_latest_cached_or_fresh", return_value=(mock_df, 3)):
+            with patch("ffbot.current_week", return_value=3):
+                report = run_weekly(
+                    mock_config,
+                    week=None,
+                    force_refresh=False,
+                    hypothetical_drop=target_name,
+                )
+
+        assert report.hypothetical_drop == target_name
+        if report.my_roster is not None:
+            assert target_name not in report.my_roster["Name"].values
+
+    def test_normal_run_unaffected_by_hypothetical_drop_flag(
+        self, mock_df, mock_config
+    ):
+        """Without --hypothetical-drop, the roster should be untouched and the
+        report should carry no hypothetical label."""
+        from unittest.mock import patch
+        from run_weekly import run_weekly
+
+        target_name = "Jordan Addison"
+        with patch("run_weekly.get_latest_cached_or_fresh", return_value=(mock_df, 3)):
+            with patch("ffbot.current_week", return_value=3):
+                report = run_weekly(
+                    mock_config,
+                    week=None,
+                    force_refresh=False,
+                    hypothetical_drop=None,
+                )
+
+        assert report.hypothetical_drop is None
+        if report.my_roster is not None:
+            assert target_name in report.my_roster["Name"].values

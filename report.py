@@ -89,6 +89,10 @@ def build_terminal_report(
     lines.append(bar)
     lines.append("")
 
+    if report.hypothetical_drop:
+        lines.append(f"  ⚠️  HYPOTHETICAL: roster shown assumes {report.hypothetical_drop} has already been dropped — this is a what-if simulation, no data was changed")
+        lines.append("")
+
     # 1. Current roster (my players)
     if report.my_roster is not None:
         lines.append("--- Current Roster ---")
@@ -282,6 +286,10 @@ def build_markdown_report(
     lines.append("")
     lines.append(f"_Generated: {now}_")
     lines.append("")
+
+    if report.hypothetical_drop:
+        lines.append(f"> ⚠️ **HYPOTHETICAL:** This report assumes **{report.hypothetical_drop}** has already been dropped. This is a what-if simulation; no data was changed.")
+        lines.append("")
 
     # Config summary
     lines.append("## Configuration")

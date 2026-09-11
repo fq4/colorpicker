@@ -138,6 +138,7 @@ class RecommendationReport:
     low_value_recs: list[AddDropRecommendation] = field(default_factory=list)
     action_plan: Optional[ActionPlan] = None
     week: Optional[int] = None
+    hypothetical_drop: Optional[str] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -655,6 +656,7 @@ def recommend_adds_drops(
 
         # Build recommendation
         rec = AddDropRecommendation(action=action)
+        flag_reasons: list[str] = []
 
         if add_player is not None:
             rec.add = str(add_player["Name"])
@@ -691,27 +693,19 @@ def recommend_adds_drops(
             for dp in drop_positions:
                 if dp in new_gaps:
                     rec.flagged = True
-                    rec.flag_reason = (rec.flag_reason or "") + (
-                        f" | Dropping {dp} would create a bench depth gap"
-                    ).strip(" |")
+                    flag_reasons.append(f"Dropping {dp} would create a bench depth gap")
                 elif dp in depth_gap_positions:
                     rec.flagged = True
-                    rec.flag_reason = (rec.flag_reason or "") + (
-                        f" | Dropping {dp} exacerbates existing bench depth gap"
-                    ).strip(" |")
+                    flag_reasons.append(f"Dropping {dp} exacerbates existing bench depth gap")
 
         # --- Cross-reference: injury statuses ---
         if add_player is not None and _is_ir(rec.add_status, ir_statuses):
             rec.flagged = True
-            rec.flag_reason = (rec.flag_reason or "") + (
-                f" | Add target {add_name} has injury status {rec.add_status}"
-            ).strip(" |")
+            flag_reasons.append(f"Add target {add_name} has injury status {rec.add_status}")
 
         if drop_player is not None and _is_ir(rec.drop_status, ir_statuses):
             rec.flagged = True
-            rec.flag_reason = (rec.flag_reason or "") + (
-                f" | Drop target {drop_name} has injury status {rec.drop_status}"
-            ).strip(" |")
+            flag_reasons.append(f"Drop target {drop_name} has injury status {rec.drop_status}")
 
         # --- Cross-reference: bench depth gap awareness ---
         # If there is an existing bench depth gap at position X, and this
@@ -726,11 +720,11 @@ def recommend_adds_drops(
         ):
             rec.flagged = True
             gap_list = ", ".join(sorted(depth_gap_positions))
-            rec.flag_reason = (rec.flag_reason or "") + (
-                f" | Uses a bench slot on {rec.add_position} depth while "
+            flag_reasons.append(
+                f"Uses a bench slot on {rec.add_position} depth while "
                 f"your {gap_list} bench gap remains unaddressed — consider "
                 f"whether a {gap_list} free agent better serves your need this week"
-            ).strip(" |")
+            )
 
             # Look up the best available non-flagged free agent at the gapped
             # position(s) and surface it as a concrete alternative.
@@ -758,7 +752,9 @@ def recommend_adds_drops(
                     f"{alt_name} ({best_alt_pos}, {alt_proj:.1f} pts) to address "
                     f"your {best_alt_pos} depth gap"
                 )
-                rec.flag_reason = (rec.flag_reason or "") + f" | {rec.alternative}"
+                flag_reasons.append(rec.alternative)
+
+        rec.flag_reason = " | ".join(flag_reasons) if flag_reasons else None
 
         # --- Build plain-English reason ---
         rec.reason = _build_add_drop_reason(
