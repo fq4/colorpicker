@@ -31,6 +31,17 @@ bench_depth_minimums:
 # (e.g., locking DEF because you're streaming weekly matchups)
 locked_positions: []
 
+# Optional independent second opinion. Disabled unless explicitly enabled here
+# or with --llm-evaluate; it never executes transactions or changes lineups.
+llm_evaluator:
+  enabled: false
+  provider: "openai-compatible"
+  model: ""
+  endpoint: "https://api.openai.com/v1/chat/completions"
+  api_key_env: "OPENAI_API_KEY"
+  max_candidates: 150
+  timeout_seconds: 60
+
 # injury statuses that prevent a player from being used as bench depth
 # (true IR-slot eligibility only — "O" is a game-day designation, not IR)
 ir_statuses:

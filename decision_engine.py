@@ -139,6 +139,9 @@ class RecommendationReport:
     action_plan: Optional[ActionPlan] = None
     week: Optional[int] = None
     hypothetical_drop: Optional[str] = None
+    llm_evaluation: Optional[dict] = None
+    llm_evaluation_error: Optional[str] = None
+    llm_evaluation_prompt: Optional[str] = None
 
 
 # --------------------------------------------------------------------------- #

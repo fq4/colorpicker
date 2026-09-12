@@ -1,4 +1,26 @@
-# LLM Independent Fantasy Evaluator — Implementation Plan
+# LLM Independent Fantasy Evaluator — Implementation Plan and Status
+
+## Implemented In This Repository
+
+The first optional evaluation phase is implemented in `llm_evaluator.py` and wired
+into `run_weekly.py` and `report.py`:
+
+- A provider-neutral interface with an OpenAI-compatible HTTP adapter.
+- Structured league context, bounded player data, and deterministic engine output;
+  the markdown report is never used as the internal input.
+- An independent/adversarial JSON-only prompt with explicit no-transaction authority.
+- Validation of required fields, enums, numeric values, and player references against
+  the supplied candidate universe.
+- Disabled-by-default configuration plus `--llm-evaluate` opt-in.
+- Graceful handling of unavailable providers and malformed responses.
+- Optional terminal/Markdown second-opinion sections that never replace the engine's
+  recommendations or action plan.
+- Fake-provider tests covering valid output, no transaction, malformed JSON, invented
+  players, disabled operation, provider failure, and report rendering.
+
+Historical persistence, outcome scoring, model comparison, richer candidate tiers, and
+additional provider adapters remain future work. The sections below describe the
+intended direction and acceptance criteria for those later phases.
 
 ## Purpose
 

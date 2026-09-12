@@ -152,7 +152,12 @@ def build_terminal_report(
             lines.append(f"  {w.message}")
         lines.append("")
 
-    # 6. Action Plan (terminal)
+    # 6. Optional independent assessment; deterministic recommendations remain authoritative.
+    if report.llm_evaluation or report.llm_evaluation_error:
+        lines.append(_format_llm_assessment_terminal(report))
+        lines.append("")
+
+    # 7. Action Plan (terminal)
     if report.action_plan is not None:
         lines.append(_format_action_plan_terminal(report.action_plan, current_week))
         lines.append("")
@@ -389,7 +394,12 @@ def build_markdown_report(
             lines.append(f"- {w.message}")
         lines.append("")
 
-    # 6. Action Plan (markdown)
+    # 6. Optional independent assessment; deterministic recommendations remain authoritative.
+    if report.llm_evaluation or report.llm_evaluation_error:
+        lines.append(_format_llm_assessment_markdown(report))
+        lines.append("")
+
+    # 7. Action Plan (markdown)
     if report.action_plan is not None:
         lines.append(_md_action_plan(report.action_plan, current_week))
         lines.append("")
@@ -403,6 +413,76 @@ def build_markdown_report(
     lines.append(f"This report is saved as `reports/{filename}` for season-long accuracy tracking.")
     lines.append("")
 
+    return "\n".join(lines)
+
+
+def _format_llm_assessment_terminal(report: RecommendationReport) -> str:
+    lines = ["--- Independent LLM Assessment (second opinion; no actions executed) ---"]
+    if report.llm_evaluation_error:
+        lines.append(f"  Assessment unavailable: {report.llm_evaluation_error}")
+        if report.llm_evaluation_prompt:
+            lines.append("")
+            lines.append("  Prompt messages that would have been sent:")
+            lines.extend(f"    {line}" for line in report.llm_evaluation_prompt.splitlines())
+        return "\n".join(lines)
+
+    data = report.llm_evaluation or {}
+    lines.append(f"  Engine score: {data.get('engine_score', 'N/A')}/100")
+    lines.append(f"  Overall: {data.get('overall_assessment', '')}")
+    for title, key in (("Agreements", "engine_agreements"), ("Corrections", "engine_corrections"), ("Missed opportunities", "missed_opportunities"), ("Holds", "holds")):
+        values = data.get(key) or []
+        if values:
+            lines.append(f"  {title}:")
+            lines.extend(f"    - {value}" for value in values)
+    for transaction in data.get("transactions") or []:
+        add = transaction.get("add_player") or "NO TRANSACTION"
+        drop = transaction.get("drop_player")
+        move = f"{add} / drop {drop}" if drop else add
+        lines.append(f"  Transaction: {move} [{transaction.get('classification', 'N/A')}, {transaction.get('confidence', 'N/A')}] — {transaction.get('reasoning', '')}")
+    lines.append(f"  Bottom line: {data.get('bottom_line', '')}")
+    return "\n".join(lines)
+
+
+def _format_llm_assessment_markdown(report: RecommendationReport) -> str:
+    lines = ["## Independent LLM Assessment", "", "> Second opinion only. The deterministic engine's recommendations and action plan remain authoritative.", ""]
+    if report.llm_evaluation_error:
+        lines.append(f"Assessment unavailable: {report.llm_evaluation_error}")
+        if report.llm_evaluation_prompt:
+            lines.extend([
+                "",
+                "### Prompt Messages That Would Have Been Sent",
+                "",
+                "```text",
+                report.llm_evaluation_prompt,
+                "```",
+            ])
+        return "\n".join(lines)
+
+    data = report.llm_evaluation or {}
+    lines.extend([
+        f"**Engine score:** {data.get('engine_score', 'N/A')}/100",
+        "",
+        "### Overall Assessment",
+        "",
+        str(data.get("overall_assessment", "")),
+        "",
+    ])
+    for title, key in (("Engine Decisions I Agree With", "engine_agreements"), ("Engine Decisions I Would Change", "engine_corrections"), ("Missed Opportunities", "missed_opportunities"), ("Holds", "holds")):
+        values = data.get(key) or []
+        if values:
+            lines.extend([f"### {title}", ""])
+            lines.extend(f"- {value}" for value in values)
+            lines.append("")
+    transactions = data.get("transactions") or []
+    if transactions:
+        lines.extend(["### Independent Transaction Recommendations", ""])
+        for transaction in transactions:
+            add = transaction.get("add_player") or "NO TRANSACTION"
+            drop = transaction.get("drop_player")
+            move = f"{add} / drop {drop}" if drop else add
+            lines.append(f"- **{move}** ({transaction.get('classification', 'N/A')}, {transaction.get('confidence', 'N/A')}): {transaction.get('reasoning', '')}")
+        lines.append("")
+    lines.extend(["### Bottom Line", "", str(data.get("bottom_line", "")), ""])
     return "\n".join(lines)
 
 

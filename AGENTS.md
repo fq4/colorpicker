@@ -135,6 +135,16 @@ unique per league/team/week so different runs never overwrite each other.
    so the omission of add/drop suggestions is always clearly labeled and not mistaken
    for running out of options. Player-level locking (protecting a specific player
    regardless of position) is a planned future extension, not yet built.
+10. **The independent LLM evaluator is optional and advisory only.** `llm_evaluator.py`
+   consumes structured cached player data plus the deterministic `RecommendationReport`
+   after the engine finishes. It is disabled by default, cannot execute transactions or
+   change lineups, and malformed or unavailable provider output must never break the
+   deterministic weekly report. Validate player references against the supplied candidate
+   universe; never pass credentials or secrets in prompts or reports.
+11. **LLM evaluations distinguish current-week value, rest-of-season value, and add/drop
+   quality.** The provider may recommend no transaction and disagreements are recorded as
+   signals, not automatic corrections. Historical outcome scoring and automatic use of
+   LLM recommendations remain future work.
 
 ## Automation / executor.py — investigated, deliberately NOT built
 

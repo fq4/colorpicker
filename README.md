@@ -19,6 +19,9 @@
 5. Produces a step-by-step **Action Plan** showing exactly what to do, the
    resulting lineup, and any remaining warnings.
 6. Saves a markdown report to `reports/` and prints a terminal summary.
+7. Optionally sends structured player data and deterministic output to an
+  independent LLM evaluator for a validated second opinion. This is disabled
+  by default and cannot execute transactions or change lineups.
 
 All recommendations are dry-run by default. The `executor.py` stubs exist as
 placeholders but are not wired to Yahoo's write API.
@@ -42,6 +45,9 @@ python run_weekly.py --league-id 123456 --team-id 5
 
 # Execute recommendations (not yet wired to Yahoo API)
 python run_weekly.py --execute
+
+# Opt in to the independent LLM assessment for one run
+python run_weekly.py --llm-evaluate
 ```
 
 ---
@@ -62,6 +68,7 @@ python run_weekly.py --execute
 | `--scoring-type TYPE` | str | from config.yaml | Override `scoring_type`: `half-ppr`, `ppr`, or `standard` (display-only) |
 | `--positions STR` | str | from config.yaml | Override `positions` slot string (functional — affects roster limit and lineup optimization) |
 | `--waiver-type TYPE` | str | from config.yaml | Override `waiver_type`: `continual_rolling` or `faab` (display-only) |
+| `--llm-evaluate` | bool | `False` | Enable the optional independent LLM assessment for this run |
 
 ### Examples
 
@@ -96,6 +103,7 @@ python run_weekly.py --league-id 999 --team-id 3 --scoring-type standard --force
 | `min_usable_projection` | Floor projection for a player to count as usable depth | Default `1.0` |
 | `min_vor_gain_to_recommend_add` | Per-position VOR threshold for add recommendations | Tune over time |
 | `min_vor_loss_to_flag_drop` | VOR threshold below which a drop is flagged | Default `-50.0` |
+| `llm_evaluator` | Optional second-opinion provider, model, timeout, and candidate limit | Disabled by default |
 
 ### Important notes
 
@@ -105,6 +113,10 @@ python run_weekly.py --league-id 999 --team-id 3 --scoring-type standard --force
 - **`positions` directly controls roster size and lineup optimization.** If your league
   has a different slot layout, update this string. You can also override it per-run with
   `--positions` without editing the file.
+- **The LLM evaluator is advisory only.** It receives structured data after the
+  deterministic engine runs. Unknown player references and malformed JSON are rejected;
+  provider failures leave the deterministic report intact. Put credentials in the
+  environment variable named by `llm_evaluator.api_key_env`, never in YAML or reports.
 
 ---
 
@@ -119,6 +131,7 @@ decision_engine.py     Core logic: get_my_roster(), flag_bench_depth_gaps(),
                        recommend_adds_drops(), recommend_lineup(),
                        build_action_plan(), simulate_post_move_roster()
                        (team_name resolution moved to data_layer)
+llm_evaluator.py       Optional provider boundary, structured prompt, and output validation
 executor.py            STUBS ONLY — submit_add_drop(), set_lineup()
 report.py              Terminal + markdown report formatting
 run_weekly.py           CLI entry point
@@ -148,7 +161,7 @@ each other. Cached data goes to `data/`, logs to `logs/`. All are gitignored.
 python -m pytest tests/ -v
 ```
 
-As of the last run: **77 tests passing**.
+As of the last run: **121 tests passing**.
 
 ---
 

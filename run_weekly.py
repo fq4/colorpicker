@@ -82,7 +82,14 @@ def build_positions_config(config: dict) -> dict:
     }
 
 
-def run_weekly(config: dict, week: int | None = None, force_refresh: bool = False, log_path: str = "logs", hypothetical_drop: str | None = None) -> RecommendationReport:
+def run_weekly(
+    config: dict,
+    week: int | None = None,
+    force_refresh: bool = False,
+    log_path: str = "logs",
+    hypothetical_drop: str | None = None,
+    evaluator=None,
+) -> RecommendationReport:
     """Execute the full weekly pipeline and return the recommendation report.
 
     1. Fetch or cache data
@@ -194,6 +201,38 @@ def run_weekly(config: dict, week: int | None = None, force_refresh: bool = Fals
         hypothetical_drop=hypothetical_drop,
     )
 
+    # The evaluator is strictly optional and receives the already-fetched data
+    # and deterministic report. It cannot execute moves or alter this report's
+    # recommendations; failures are recorded without breaking the weekly run.
+    llm_settings = config.get("llm_evaluator", {})
+    if llm_settings.get("enabled", False):
+        try:
+            from llm_evaluator import (
+                EvaluatorError,
+                IndependentLLMEvaluator,
+                SYSTEM_PROMPT,
+                build_evaluation_context,
+                build_user_prompt,
+                create_provider,
+            )
+
+            active_evaluator = evaluator or IndependentLLMEvaluator(create_provider(config))
+            context = build_evaluation_context(df, report, config, current_week)
+            # Retain the sanitized prompt for transparency when configuration
+            # or the provider prevents an assessment from being returned.
+            report.llm_evaluation_prompt = (
+                "SYSTEM_PROMPT:\n"
+                + SYSTEM_PROMPT
+                + "\nUSER_PROMPT:\n"
+                + build_user_prompt(context)
+            )
+            report.llm_evaluation = active_evaluator.evaluate(context).data
+            logger.info("Independent LLM assessment completed")
+        except Exception as exc:
+            # Do not expose provider responses, credentials, or prompts in logs.
+            report.llm_evaluation_error = str(exc)
+            logger.warning(f"Independent LLM assessment unavailable: {exc}")
+
     return report
 
 
@@ -268,6 +307,10 @@ def main():
         dest="locked_positions",
         help="Comma-separated list of positions to lock (no add/drop suggestions, e.g. DEF,TE)"
     )
+    parser.add_argument(
+        "--llm-evaluate", action="store_true", default=False,
+        help="Enable the optional independent LLM assessment for this run",
+    )
     args = parser.parse_args()
 
     dry_run = args.dry_run or not args.execute
@@ -292,6 +335,8 @@ def main():
         config["waiver_type"] = args.waiver_type
     if args.locked_positions is not None:
         config["locked_positions"] = [p.strip() for p in args.locked_positions.split(",") if p.strip()]
+    if args.llm_evaluate:
+        config.setdefault("llm_evaluator", {})["enabled"] = True
 
     # Run pipeline (run_weekly will derive team_name from team_id via the df)
     report = run_weekly(config, week=args.week, force_refresh=args.force_refresh, hypothetical_drop=args.hypothetical_drop)
