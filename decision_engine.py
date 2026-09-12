@@ -1410,9 +1410,28 @@ def build_action_plan(
     )
     remaining_warnings = flag_bench_depth_gaps(simulated, positions_config)
 
-    # Generate comparison notes: for each add, compare its projection
-    # against the starter at the same position in the final lineup
-    comparison_notes = _generate_comparison_notes(moves, original_lineup, final_lineup)
+    # Compare each add against the state Yahoo will see when that move runs:
+    # earlier moves have completed, and this move's drop has happened, but
+    # this move's add has not. That prevents a new player from being compared
+    # against its own drop target or against a starter dropped earlier.
+    comparison_lineups = []
+    roster_before_move = my_roster.copy()
+    for move in moves:
+        roster_for_comparison = roster_before_move
+        if move.drop:
+            roster_for_comparison = roster_for_comparison[
+                roster_for_comparison["Name"] != move.drop
+            ]
+        comparison_lineups.append(
+            recommend_lineup(df, roster_for_comparison, positions_config, current_week)
+        )
+        roster_before_move = simulate_post_move_roster(
+            df, roster_before_move, [move], current_week
+        )
+
+    comparison_notes = _generate_comparison_notes(
+        moves, original_lineup, final_lineup, comparison_lineups
+    )
 
     return ActionPlan(
         moves=moves,
@@ -1424,7 +1443,9 @@ def build_action_plan(
     )
 
 
-def _generate_comparison_notes(moves, original_lineup, final_lineup=None):
+def _generate_comparison_notes(
+    moves, original_lineup, final_lineup=None, comparison_lineups=None
+):
     notes = []
     if original_lineup is None:
         return notes
@@ -1438,16 +1459,20 @@ def _generate_comparison_notes(moves, original_lineup, final_lineup=None):
         if rec.add and str(rec.add).strip()
     }
 
-    starter_by_pos = {}
-    for s in original_lineup.starters:
-        pos_set = {p.strip() for p in str(s.position).split(",")}
-        for pos in pos_set:
-            starter_by_pos[pos] = s
-
-    # Pass 1: new adds vs original starters (existing behavior)
-    for rec in moves:
+    # Pass 1: compare each add against the lineup immediately before its move.
+    for move_index, rec in enumerate(moves):
         if rec.add is None or rec.add_projection is None:
             continue
+        comparison_lineup = original_lineup
+        if comparison_lineups is not None and move_index < len(comparison_lineups):
+            comparison_lineup = comparison_lineups[move_index]
+
+        starter_by_pos = {}
+        for s in comparison_lineup.starters:
+            pos_set = {p.strip() for p in str(s.position).split(",")}
+            for pos in pos_set:
+                starter_by_pos[pos] = s
+
         add_position = rec.add_position or ""
         add_proj = rec.add_projection
         add_pos_clean = add_position.strip()
@@ -1470,7 +1495,7 @@ def _generate_comparison_notes(moves, original_lineup, final_lineup=None):
                 )
         else:
             notes.append(
-                f"{rec.add} ({add_pos_clean}, {add_proj}) added to bench - no starter at same position to compete with"
+                f"{rec.add} ({add_pos_clean}, {add_proj}) added as the starter - no remaining starter at same position to compete with"
             )
 
     # Pass 2: intra-roster bench upgrades — detect when an existing bench

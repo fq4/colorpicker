@@ -931,8 +931,14 @@ class TestActionPlan:
         assert len(k_slots) == 1
         assert k_slots[0].player == "Brandon Aubrey"
         assert abs(k_slots[0].projection - 10.5) < 0.01
-        # Comparison notes should reflect the replacement
-        assert any("Brandon Aubrey" in n and "replaces" in n and "higher projection" in n for n in plan.comparison_notes)
+        # With the only K starter dropped, the add becomes the starter without
+        # comparing it against the player who is no longer on the roster.
+        assert any(
+            "Brandon Aubrey" in n
+            and "added as the starter" in n
+            and "Jake Elliott" not in n
+            for n in plan.comparison_notes
+        )
 
     def test_build_action_plan_comparison_notes_lower_proj_stays_on_bench(self, mock_df, mock_config, positions_config):
         """A newly-added player with lower projection should stay on the bench."""
@@ -1180,6 +1186,55 @@ class TestIntraRosterComparisonNotes:
         assert len(notes) == 1
         assert "Juwan Johnson" in notes[0]
         assert "replaces" in notes[0]
+
+    def test_sequential_add_notes_use_lineup_after_earlier_drop(
+        self, mock_df, mock_config, positions_config
+    ):
+        """Later adds must not be compared against a starter dropped earlier."""
+        import pandas as pd
+        from tests.conftest import _make_player
+        from decision_engine import AddDropRecommendation
+
+        mock_df = pd.concat(
+            [
+                mock_df,
+                pd.DataFrame(
+                    [
+                        _make_player(40, "Romeo Doubs", "GB", "WR", mock_config["team_name"], 7, "", "60.0", 20.0, 10.0),
+                        _make_player(41, "Matthew Golden", "GB", "WR", "Free Agent", float("nan"), "", "60.0", 19.0, 10.0),
+                        _make_player(42, "Jakobi Meyers", "JAX", "WR", "Free Agent", float("nan"), "", "60.0", 18.0, 10.0),
+                    ]
+                ),
+            ],
+            ignore_index=True,
+        )
+        roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
+        original_lineup = recommend_lineup(mock_df, roster, positions_config, WEEK)
+        recs = [
+            AddDropRecommendation(
+                action="add_drop", add="Matthew Golden", add_position="WR",
+                drop="Romeo Doubs", drop_position="WR", add_projection=19.0,
+                drop_projection=20.0, vor_gain=1.0, flagged=False,
+            ),
+            AddDropRecommendation(
+                action="fa_add", add="Jakobi Meyers", add_position="WR",
+                add_projection=18.0, vor_gain=1.0, flagged=False,
+            ),
+        ]
+
+        plan = build_action_plan(
+            mock_df, roster, recs, positions_config, WEEK,
+            original_lineup=original_lineup,
+        )
+
+        later_add_notes = [n for n in plan.comparison_notes if "Jakobi Meyers" in n]
+        assert len(later_add_notes) == 1
+        assert "Romeo Doubs" not in later_add_notes[0]
+        assert "Matthew Golden" in later_add_notes[0]
+        assert all(
+            "Romeo Doubs" not in note
+            for note in plan.comparison_notes
+        )
 
 # --- get_team_name_from_id ---
 
