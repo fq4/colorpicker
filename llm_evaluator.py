@@ -131,25 +131,17 @@ def build_evaluation_context(
     current_week: int,
 ) -> EvaluationContext:
     """Build a bounded structured payload without scraping or exposing secrets."""
-    max_candidates = int(config.get("llm_evaluator", {}).get("max_candidates", 150))
     roster_names = set(report.my_roster["Name"].astype(str)) if report.my_roster is not None else set()
     recommendation_names = _recommendation_names(report)
+    if report.action_plan:
+        comparison_text = " ".join(report.action_plan.comparison_notes)
+        recommendation_names.update(
+            name for name in df["Name"].astype(str) if name in comparison_text
+        )
     selected_names = roster_names | recommendation_names
 
     candidates = df.copy()
-    candidates["_is_roster"] = candidates["Name"].astype(str).isin(roster_names)
-    candidates["_is_recommended"] = candidates["Name"].astype(str).isin(recommendation_names)
-    week_col = f"Week {current_week}"
-    candidates["_projection"] = pd.to_numeric(candidates.get(week_col, 0), errors="coerce").fillna(0)
-    candidates["_vor"] = pd.to_numeric(candidates.get("VOR", 0), errors="coerce").fillna(0)
-    candidates = candidates.sort_values(
-        by=["_is_roster", "_is_recommended", "_projection", "_vor"],
-        ascending=[False, False, False, False],
-    )
     chosen = candidates[candidates["Name"].astype(str).isin(selected_names)].copy()
-    remaining = candidates[~candidates["Name"].astype(str).isin(selected_names)]
-    slots_left = max(0, max_candidates - len(chosen))
-    chosen = pd.concat([chosen, remaining.head(slots_left)], ignore_index=True)
     players = [_serialize_player(row, current_week) for _, row in chosen.iterrows()]
 
     universe = {player["name"] for player in players}
@@ -271,17 +263,12 @@ def _serialize_player(row: pd.Series, current_week: int) -> dict[str, Any]:
             return float(raw)
         return str(raw)
 
-    weeks = {
-        col: value(col)
-        for col in row.index
-        if str(col).startswith("Week ") and str(col)[5:].isdigit()
-    }
     return {
         "id": value("ID"), "name": value("Name"), "team": value("Team"),
         "position": value("Position"), "status": value("Status"),
         "owned_pct": value("% Owned"), "owner": value("Owner"),
         "owner_id": value("Owner ID"), "current_projection": value(f"Week {current_week}"),
-        "week_projections": weeks, "remaining": value("Remaining"), "vor": value("VOR"),
+        "remaining": value("Remaining"), "vor": value("VOR"),
     }
 
 

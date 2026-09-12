@@ -116,16 +116,17 @@ def test_unknown_player_reference_is_rejected(mock_df, mock_config, positions_co
         )
 
 
-def test_candidate_limit_keeps_roster_and_engine_candidates(
+def test_player_data_only_contains_roster_and_referenced_candidates(
     mock_df, mock_config, positions_config
 ):
     config = dict(mock_config)
-    config["llm_evaluator"] = {"max_candidates": 1}
     context = build_context(mock_df, config, positions_config)
     names = {player["name"] for player in context.players}
 
     assert set(mock_df[mock_df["Owner"] == mock_config["team_name"]]["Name"]).issubset(names)
     assert {"Brandon Aubrey", "Jake Elliott"}.issubset(names)
+    assert "Travis Kelce" not in names
+    assert all("week_projections" not in player for player in context.players)
 
 
 def test_report_renders_valid_assessment_without_replacing_engine(mock_df, mock_config, positions_config):

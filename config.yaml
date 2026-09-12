@@ -39,7 +39,6 @@ llm_evaluator:
   model: ""
   endpoint: "https://api.openai.com/v1/chat/completions"
   api_key_env: "OPENAI_API_KEY"
-  max_candidates: 150
   timeout_seconds: 60
 
 # injury statuses that prevent a player from being used as bench depth
