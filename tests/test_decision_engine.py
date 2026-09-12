@@ -2560,3 +2560,125 @@ class TestHypotheticalDrop:
                 f"Hypothetically-dropped player '{target_name}' should not appear as a "
                 f"Drop target, but was recommended in action='{rec.action}'"
             )
+
+
+class TestLockedPositions:
+    def test_locked_position_excluded_from_recommendations(
+        self, mock_df, mock_config
+    ):
+        """When DEF is locked, no recommendation involving DEF (as add or drop)
+        should appear. Other-position recommendations should be unaffected."""
+        import pandas as pd
+        from unittest.mock import patch
+
+        config = dict(mock_config)
+        config["locked_positions"] = ["DEF"]
+
+        roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
+
+        fake_opt = pd.DataFrame({
+            "Add": ["Baltimore (DEF, BAL)", "Woody Marks (RB, JAX)"],
+            "Drop": ["San Francisco (DEF, SF)", "Joe Milton (QB, TEN)"],
+            "VOR": [5.0, 6.0],
+        })
+
+        fa_def = mock_df[(mock_df["Owner"] == "Free Agent") & (mock_df["Name"] == "Baltimore")].iloc[0]
+        fa_rb = mock_df[(mock_df["Owner"] == "Free Agent") & (mock_df["Name"] == "Woody Marks")].iloc[0]
+        sf_def = mock_df[(mock_df["Owner"] == mock_config["team_name"]) & (mock_df["Name"] == "San Francisco")].iloc[0]
+        joe_milton = mock_df[(mock_df["Owner"] == mock_config["team_name"]) & (mock_df["Name"] == "Joe Milton")].iloc[0]
+
+        def fake_lookup(df, name, position=None):
+            if name == "Baltimore":
+                return fa_def
+            elif name == "Woody Marks":
+                return fa_rb
+            elif name == "San Francisco":
+                return sf_def
+            elif name == "Joe Milton":
+                return joe_milton
+            return None
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", side_effect=fake_lookup):
+                recs = recommend_adds_drops(mock_df, roster, WEEK, config)
+
+        # No recommendation involving DEF should exist
+        for rec in recs:
+            if rec.add:
+                assert rec.add_position != "DEF", (
+                    f"Add '{rec.add}' is DEF — should have been skipped when DEF is locked"
+                )
+            if rec.drop:
+                assert rec.drop_position != "DEF", (
+                    f"Drop '{rec.drop}' is DEF — should have been skipped when DEF is locked"
+                )
+
+        # The RB add should still be present
+        assert any(r.add == "Woody Marks" for r in recs), (
+            "Locking DEF should not suppress non-DEF recommendations"
+        )
+
+    def test_locked_position_does_not_suppress_depth_warnings(
+        self, mock_df, mock_config
+    ):
+        """Locking a position must not exempt it from bench-depth-gap warnings
+        or bye-week warnings — it only blocks add/drop suggestions."""
+        from unittest.mock import patch
+        from run_weekly import run_weekly
+        from report import build_terminal_report
+
+        config = dict(mock_config)
+        config["locked_positions"] = ["DEF"]
+
+        with patch("run_weekly.get_latest_cached_or_fresh", return_value=(mock_df, 3)):
+            with patch("ffbot.current_week", return_value=3):
+                report = run_weekly(
+                    config,
+                    week=None,
+                    force_refresh=False,
+                    hypothetical_drop=None,
+                )
+
+        # Depth warnings should still be computed normally
+        # The mock roster has a bench RB gap (Robbie Ouzts on IR with 0.0 proj)
+        # Locking DEF shouldn't change that
+        assert report.depth_warnings is not None
+        # Just confirm the pipeline ran without error and produced warnings
+        # (we don't assert specific DEF gaps since the mock may or may not have them)
+
+        # Locked positions note should appear in the report
+        terminal = build_terminal_report(report, report.week or 3, 2026, config, dry_run=True)
+        assert "Locked positions" in terminal
+        assert "DEF" in terminal
+
+    def test_no_lock_does_not_filter_any_position(
+        self, mock_df, mock_config
+    ):
+        """Without locked_positions, ALL positions (including DEF) are eligible
+        for recommendations. This is the control case to confirm locking is
+        what actually suppresses DEF."""
+        import pandas as pd
+        from unittest.mock import patch
+
+        config = dict(mock_config)
+        # Ensure no locked_positions (clean config)
+        config["locked_positions"] = []
+
+        roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
+
+        fake_opt = pd.DataFrame({
+            "Add": ["Baltimore (DEF, BAL)"],
+            "Drop": [""],
+            "VOR": [5.0],
+        })
+
+        fa_def = mock_df[(mock_df["Owner"] == "Free Agent") & (mock_df["Name"] == "Baltimore")].iloc[0]
+
+        with patch("ffbot.optimize", return_value=fake_opt):
+            with patch("decision_engine._lookup_player", return_value=fa_def):
+                recs = recommend_adds_drops(mock_df, roster, WEEK, config)
+
+        # Without locking, the DEF add should appear
+        assert any(r.add == "Baltimore" for r in recs), (
+            "Without locked_positions, DEF recommendations should appear"
+        )

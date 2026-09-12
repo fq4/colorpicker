@@ -93,6 +93,12 @@ def build_terminal_report(
         lines.append(f"  ⚠️  HYPOTHETICAL: roster shown assumes {report.hypothetical_drop} has already been dropped — this is a what-if simulation, no data was changed")
         lines.append("")
 
+    locked = config.get("locked_positions", [])
+    if locked:
+        locked_str = ", ".join(locked)
+        lines.append(f"  🔒 Locked positions (no add/drop suggestions): {locked_str}")
+        lines.append("")
+
     # 1. Current roster (my players)
     if report.my_roster is not None:
         lines.append("--- Current Roster ---")
@@ -289,6 +295,11 @@ def build_markdown_report(
 
     if report.hypothetical_drop:
         lines.append(f"> ⚠️ **HYPOTHETICAL:** This report assumes **{report.hypothetical_drop}** has already been dropped. This is a what-if simulation; no data was changed.")
+        lines.append("")
+
+    locked = config.get("locked_positions", [])
+    if locked:
+        lines.append(f"> 🔒 **Locked positions** (no add/drop suggestions): {', '.join(locked)}")
         lines.append("")
 
     # Config summary

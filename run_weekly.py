@@ -263,6 +263,11 @@ def main():
         dest="hypothetical_drop",
         help="Simulate dropping a player from your roster for what-if analysis (does not change any data)"
     )
+    parser.add_argument(
+        "--locked-positions", type=str, default=None,
+        dest="locked_positions",
+        help="Comma-separated list of positions to lock (no add/drop suggestions, e.g. DEF,TE)"
+    )
     args = parser.parse_args()
 
     dry_run = args.dry_run or not args.execute
@@ -285,6 +290,8 @@ def main():
         config["positions"] = args.positions
     if args.waiver_type is not None:
         config["waiver_type"] = args.waiver_type
+    if args.locked_positions is not None:
+        config["locked_positions"] = [p.strip() for p in args.locked_positions.split(",") if p.strip()]
 
     # Run pipeline (run_weekly will derive team_name from team_id via the df)
     report = run_weekly(config, week=args.week, force_refresh=args.force_refresh, hypothetical_drop=args.hypothetical_drop)

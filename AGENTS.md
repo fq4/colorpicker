@@ -45,7 +45,8 @@ execution, dry-run by default, etc.).
 ## Config
 
 `config.yaml` holds defaults: `league_id`, `team_id`, `positions`, scoring settings,
-`bench_depth_minimums`, `ir_statuses`, VOR thresholds. `--league-id` and `--team-id` CLI
+`bench_depth_minimums`, `ir_statuses`, `worst_vor_drop_note_threshold`, `locked_positions`, VOR
+thresholds. `--league-id`, `--team-id`, `--locked-positions`, and `--hypothetical-drop` CLI
 flags override these per-run without editing the file.
 
 **Important:** `team_name` is NOT a maintained config value — it is derived at runtime
@@ -84,6 +85,8 @@ python run_weekly.py --force-refresh          # bypass cache, re-scrape (~7 min)
 python run_weekly.py --week 3                 # override auto-detected week
 python run_weekly.py --league-id X --team-id Y  # analyze a different league/team for this run only
 python run_weekly.py --execute                # NOT YET WIRED — executor.py is stubs only, see below
+python run_weekly.py --hypothetical-drop "Player Name"  # what-if: simulate dropping a player without changing any data
+python run_weekly.py --locked-positions DEF,TE  # suppress add/drop suggestions at listed positions
 ```
 
 Reports save to `reports/league_{league_id}_team_{team_id}_week_{n}.md` — filenames are
@@ -122,6 +125,16 @@ unique per league/team/week so different runs never overwrite each other.
    `_build_add_drop_reason()` both read the position-specific value so reasoning text
    and confidence stay aligned. Don't collapse this back to a single scalar — the
    position distinction is a deliberate strategy choice.
+9. **Position locking suppresses add/drop suggestions only, not roster analysis.**
+   `locked_positions` in `config.yaml` (overridable via `--locked-positions`) causes
+   `recommend_adds_drops()` to skip any recommendation — add, drop, or add/drop pair —
+   where either side involves a locked position. Bench-depth warnings, bye-week
+   warnings, lineup optimization, and all other pipeline stages are unaffected; the
+   locked position's current players still appear in the roster and lineup just as
+   before. A "Locked positions" note is rendered in both terminal and markdown reports
+   so the omission of add/drop suggestions is always clearly labeled and not mistaken
+   for running out of options. Player-level locking (protecting a specific player
+   regardless of position) is a planned future extension, not yet built.
 
 ## Automation / executor.py — investigated, deliberately NOT built
 
@@ -147,7 +160,7 @@ Always run the full suite after any change, not just tests for what you touched:
 python -m pytest tests/ -v
 ```
 
-As of the last commit: 61 tests passing. If your change doesn't add or update a test,
+As of the last commit: 113 tests passing. If your change doesn't add or update a test,
 that's a signal you may have skipped verification — this project's owner checks test
 coverage claims against actual pytest output, not summaries.
 

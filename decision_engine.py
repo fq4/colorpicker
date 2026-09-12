@@ -202,6 +202,20 @@ def _parse_ir_statuses(config: dict) -> set[str]:
     return set(config.get("ir_statuses", ["IR", "IR-R", "NFI", "NFI-R", "NFI-A", "COVID", "PUP", "PUP-R", "O"]))
 
 
+def _parse_locked_positions(config: dict) -> set[str]:
+    """Return a set of uppercased position strings that are locked for add/drop."""
+    raw = config.get("locked_positions", [])
+    return {str(p).strip().upper() for p in raw if p and str(p).strip()}
+
+
+def _is_position_locked(position_str: Optional[str], locked_positions: set[str]) -> bool:
+    """Check if any position in *position_str* (e.g. 'QB,WR,RB,TE') is in *locked_positions*."""
+    if not position_str or not locked_positions:
+        return False
+    pos_set = {x.strip().upper() for x in str(position_str).split(",")}
+    return bool(pos_set & locked_positions)
+
+
 def _is_ir(status: Optional[str], ir_statuses: set[str]) -> bool:
     if pd.isna(status) or not status or str(status).strip() == "":
         return False
@@ -602,6 +616,7 @@ def recommend_adds_drops(
 
     week_col = _week_col(current_week)
     ir_statuses = _parse_ir_statuses(config)
+    locked_positions = _parse_locked_positions(config)
 
     # Check current bench depth
     depth_warnings = flag_bench_depth_gaps(my_roster, positions_config)
@@ -641,6 +656,16 @@ def recommend_adds_drops(
 
         add_player = _lookup_player(df, add_name, add_pos) if add_name else None
         drop_player = _lookup_player(df, drop_name, drop_pos) if drop_name else None
+
+        # Skip any recommendation involving a locked position (in either add or drop)
+        add_pos_str = add_player["Position"] if add_player is not None else add_pos
+        drop_pos_str = drop_player["Position"] if drop_player is not None else drop_pos
+        if _is_position_locked(add_pos_str, locked_positions):
+            logger.debug(f"Skipping recommendation: add position '{add_pos_str}' is locked")
+            continue
+        if drop_player is not None and _is_position_locked(drop_pos_str, locked_positions):
+            logger.debug(f"Skipping recommendation: drop position '{drop_pos_str}' is locked")
+            continue
 
         # Determine action type
         if add_name and drop_name:

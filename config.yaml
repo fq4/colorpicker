@@ -27,6 +27,10 @@ bench_depth_minimums:
   QB: 1
   TE: 0
 
+# positions where no add/drop recommendations will be generated
+# (e.g., locking DEF because you're streaming weekly matchups)
+locked_positions: []
+
 # injury statuses that prevent a player from being used as bench depth
 # (true IR-slot eligibility only — "O" is a game-day designation, not IR)
 ir_statuses:
