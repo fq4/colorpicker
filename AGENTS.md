@@ -145,6 +145,12 @@ unique per league/team/week so different runs never overwrite each other.
    quality.** The provider may recommend no transaction and disagreements are recorded as
    signals, not automatic corrections. Historical outcome scoring and automatic use of
    LLM recommendations remain future work.
+12. **Complete transaction reasoning is deterministic and state-based.**
+   `reasoning_engine.py` evaluates add/drop states against HOLD, validates roster size,
+   duplicate players, legal starters, current-week and ROS deltas, VOR delta, starter
+   impact, scarcity, opportunity cost, drop resistance, alternatives, confidence, and a
+   structured reasoning ledger. Do not treat positive incoming-player VOR as sufficient
+   evidence of a good transaction, and do not let LLM output override these calculations.
 
 ## Automation / executor.py — investigated, deliberately NOT built
 

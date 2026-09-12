@@ -31,6 +31,9 @@ bench_depth_minimums:
 # (e.g., locking DEF because you're streaming weekly matchups)
 locked_positions: []
 
+# Positions where current-week streaming can outweigh long-term roster value.
+streaming_positions: [K, DEF]
+
 # Optional independent second opinion. Disabled unless explicitly enabled here
 # or with --llm-evaluate; it never executes transactions or changes lineups.
 llm_evaluator:

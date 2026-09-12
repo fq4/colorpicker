@@ -47,6 +47,15 @@ class AddDropRecommendation:
     flag_reason: Optional[str] = None
     alternative: Optional[str] = None  # suggested alternative when flagged for gap mismatch
     dry_run: bool = True
+    current_week_delta: Optional[float] = None
+    ros_delta: Optional[float] = None
+    transaction_vor_delta: Optional[float] = None
+    starter_impact: Optional[str] = None
+    transaction_classification: Optional[str] = None
+    reasoning_confidence: Optional[str] = None
+    drop_resistance: Optional[float] = None
+    reasoning_ledger: Optional[dict] = None
+    contradictions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -802,6 +811,46 @@ def recommend_adds_drops(
         rec.confidence = _assess_confidence(
             rec, min_vor_add_default, min_vor_add_config, ir_statuses, depth_gap_positions
         )
+
+        # Evaluate complete add/drop state after the legacy optimizer fields
+        # are populated. The reasoning layer is authoritative for legality and
+        # transaction deltas, while the legacy VOR field remains unchanged.
+        if rec.add and rec.drop:
+            from reasoning_engine import evaluate_transaction
+
+            transaction_eval = evaluate_transaction(
+                df,
+                my_roster,
+                rec.add,
+                rec.drop,
+                positions_config,
+                current_week,
+                config,
+            )
+            rec.current_week_delta = transaction_eval.current_week_delta
+            rec.ros_delta = transaction_eval.ros_delta
+            rec.transaction_vor_delta = transaction_eval.vor_delta
+            rec.starter_impact = transaction_eval.starter_impact
+            rec.transaction_classification = transaction_eval.classification
+            rec.reasoning_confidence = transaction_eval.confidence
+            rec.drop_resistance = transaction_eval.drop_resistance
+            rec.reasoning_ledger = transaction_eval.ledger
+            rec.contradictions = transaction_eval.contradictions
+            rec.reason = (
+                rec.reason.rstrip(".")
+                + f". Transaction analysis: Week {current_week} lineup delta "
+                f"{transaction_eval.current_week_delta:+.1f}, ROS delta "
+                f"{transaction_eval.ros_delta:+.1f}, VOR delta "
+                f"{transaction_eval.vor_delta:+.1f}, "
+                f"{transaction_eval.starter_impact}, "
+                f"{transaction_eval.classification}"
+            )
+            if not transaction_eval.legal:
+                rec.flagged = True
+                legality_reason = " | ".join(transaction_eval.errors)
+                rec.flag_reason = "; ".join(
+                    part for part in [rec.flag_reason, f"Illegal transaction: {legality_reason}"] if part
+                )
 
         # --- Transparency: ffbot drop vs worst-VOR bench player (appended AFTER reason build) ---
         # ffbot's optimizer maximizes starting-lineup points, not VOR, so it may

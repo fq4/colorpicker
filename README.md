@@ -22,6 +22,8 @@
 7. Optionally sends structured player data and deterministic output to an
   independent LLM evaluator for a validated second opinion. This is disabled
   by default and cannot execute transactions or change lineups.
+8. Evaluates complete add/drop transactions against HOLD with legality,
+  starter-impact, current-week, ROS, VOR, scarcity, and opportunity-cost metrics.
 
 All recommendations are dry-run by default. The `executor.py` stubs exist as
 placeholders but are not wired to Yahoo's write API.
@@ -131,6 +133,8 @@ decision_engine.py     Core logic: get_my_roster(), flag_bench_depth_gaps(),
                        recommend_adds_drops(), recommend_lineup(),
                        build_action_plan(), simulate_post_move_roster()
                        (team_name resolution moved to data_layer)
+reasoning_engine.py    Complete-roster transaction evaluation, legality checks,
+                       HOLD comparison, reasoning ledger, and contradiction checks
 llm_evaluator.py       Optional provider boundary, structured prompt, and output validation
 executor.py            STUBS ONLY — submit_add_drop(), set_lineup()
 report.py              Terminal + markdown report formatting
