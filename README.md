@@ -30,6 +30,19 @@ placeholders but are not wired to Yahoo's write API.
 
 ---
 
+## Attribution and dependency note
+
+This project uses the upstream `ffbot` package as a dependency for read-only Yahoo
+Fantasy Football data collection. We do not modify the `ffbot` source code in this
+repository; this project adds a separate decision layer, recommendation engine,
+reporting, and analysis tooling on top of it.
+
+`ffbot` is distributed under the MIT license. If you publish or redistribute this
+project, it is good practice to keep attribution to `ffbot` and to include your
+own repository license if you distribute the code.
+
+---
+
 ## Quick start
 
 ```bash
