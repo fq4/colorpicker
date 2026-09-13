@@ -39,6 +39,7 @@ from decision_engine import (
     _parse_optimizer_player,
     _lookup_player,
     _is_ir,
+    _parse_ir_statuses,
     _week_col,
 )
 
@@ -77,6 +78,20 @@ class TestDataLayer:
 
 
 class TestGetMyRoster:
+    def test_default_ir_statuses_do_not_treat_out_as_ir(self):
+        """Game-day 'Out' is not IR-slot eligible unless explicitly configured."""
+        status_set = _parse_ir_statuses({})
+        assert "O" not in status_set
+        assert _is_ir("O", status_set) is False
+
+    def test_rank_free_agents_keeps_out_players_available(self):
+        df = pd.DataFrame([
+            {"Name": "Out Player", "Team": "FA", "Position": "WR", "Status": "O", "% Owned": "10%", "Week 3": 12.0, "VOR": 12.0, "Owner": "Free Agent", "Owner ID": None},
+            {"Name": "Healthy Player", "Team": "FA", "Position": "WR", "Status": "", "% Owned": "10%", "Week 3": 15.0, "VOR": 15.0, "Owner": "Free Agent", "Owner ID": None},
+        ])
+        available = rank_free_agents(df, "WR", current_week=3)
+        assert "Out Player" in available["Name"].tolist()
+
     def test_filters_by_team_name(self, mock_df, mock_config):
         """Verify only the user's team players are returned."""
         roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)

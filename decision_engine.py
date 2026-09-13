@@ -211,7 +211,12 @@ def _week_col(current_week: int) -> str:
 
 
 def _parse_ir_statuses(config: dict) -> set[str]:
-    return set(config.get("ir_statuses", ["IR", "IR-R", "NFI", "NFI-R", "NFI-A", "COVID", "PUP", "PUP-R", "O"]))
+    return set(
+        config.get(
+            "ir_statuses",
+            ["IR", "IR-R", "NFI", "NFI-R", "NFI-A", "COVID", "PUP", "PUP-R"],
+        )
+    )
 
 
 def _parse_locked_positions(config: dict) -> set[str]:
@@ -475,7 +480,7 @@ def rank_free_agents(
     included but flagged (returned with a ``flagged`` column).
     """
     if exclude_status is None:
-        exclude_status = ["IR", "IR-R", "PUP", "PUP-R", "O", "NFI", "NFI-R", "NFI-A", "COVID"]
+        exclude_status = ["IR", "IR-R", "PUP", "PUP-R", "NFI", "NFI-R", "NFI-A", "COVID"]
 
     week_col = _week_col(current_week)
 
