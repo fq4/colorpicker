@@ -222,7 +222,8 @@ class TestRecommendLineup:
         if any(s.player == "Tyreek Hill" for s in lineup.starters):
             hill = [s for s in lineup.starters if s.player == "Tyreek Hill"][0]
             assert hill.flagged
-            assert hill.bench_alternative is not None
+            # All three WRs in this fixture start (including FLEX).
+            assert hill.bench_alternative is None
 
     def test_bench_contains_unused_players(self, mock_df, mock_config, positions_config):
         """With 10 rostered players (9 starters + 1 IR), bench should be empty
@@ -301,7 +302,8 @@ class TestRecommendLineup:
         good_wr["Week 3"] = 8.0
         roster = pd.concat([roster, pd.DataFrame([zero_wr, good_wr])], ignore_index=True)
 
-        lineup = recommend_lineup(mock_df, roster, positions_config, WEEK)
+        # Keep both alternatives on the bench, rather than filling WR2/FLEX.
+        lineup = recommend_lineup(mock_df, roster, {**positions_config, "positions": "WR, BN, BN"}, WEEK)
         flagged = [s for s in lineup.flagged_starters if s.player == "Tyreek Hill"]
         assert len(flagged) == 1
         assert flagged[0].bench_alternative == "Good Bench WR"

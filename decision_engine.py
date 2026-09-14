@@ -1101,7 +1101,6 @@ def recommend_lineup(
 
     optimal_players = _optimal_slot_assignments(players, slot_order, week_col)
     for slot_idx, slot_type in enumerate(slot_order):
-        compatible = SLOT_POSITION_MAP.get(slot_type, set())
         best = optimal_players.get(slot_idx)
 
         if best is not None:
@@ -1110,13 +1109,6 @@ def recommend_lineup(
             is_flagged = status_val.strip() in ("Q", "Q-") or (
                 status_val.strip().startswith("Q") if status_val else False
             )
-
-            # Find bench alternative if flagged
-            bench_alt: Optional[LineupSlot] = None
-            if is_flagged:
-                bench_alt = _find_bench_alternative(
-                    players, used_names, compatible, week_col, ir_statuses
-                )
 
             # Number repeated slots (WR1, WR2, RB1, RB2)
             if slot_type in ("WR", "RB"):
@@ -1134,17 +1126,13 @@ def recommend_lineup(
                 vor=_safe_float(best.get("VOR")) or 0.0,
                 status=status_val,
                 flagged=is_flagged,
-                bench_alternative=bench_alt.player if bench_alt else None,
-                bench_alt_projection=bench_alt.projection if bench_alt else None,
-                bench_alt_status=bench_alt.status if bench_alt else "",
             )
             assignments[slot_idx] = assignment
 
     # Remaining players go to bench
+    bench_players = players[~players["Name"].isin(used_names)]
     bench_slots: list[LineupSlot] = []
-    for _, row in players.iterrows():
-        if row["Name"] in used_names:
-            continue
+    for _, row in bench_players.iterrows():
         bench_slots.append(
             LineupSlot(
                 slot="BN",
@@ -1156,6 +1144,18 @@ def recommend_lineup(
                 status=_safe_status(row.get("Status")) or "",
             )
         )
+
+    # Pick alternatives only after every starter and bench occupant is known.
+    for slot_idx, assignment in assignments.items():
+        if assignment.flagged:
+            alternative = _find_bench_alternative(
+                bench_players, SLOT_POSITION_MAP.get(slot_order[slot_idx], set()),
+                week_col, ir_statuses,
+            )
+            if alternative is not None:
+                assignment.bench_alternative = alternative.player
+                assignment.bench_alt_projection = alternative.projection
+                assignment.bench_alt_status = alternative.status
 
     # Build result
     starters = [assignments[i] for i in sorted(assignments.keys())]
@@ -1242,33 +1242,23 @@ def _slot_order(starting_slots: list[str]) -> list[str]:
 
 
 def _find_bench_alternative(
-    players: pd.DataFrame,
-    used_names: set[str],
+    bench_players: pd.DataFrame,
     compatible: set[str],
     week_col: str,
     ir_statuses: set[str],
 ) -> Optional[LineupSlot]:
-    """Find the best bench player who can fill a given slot type.
+    """Find a compatible, positive-projection player on the finalized bench.
 
-    Excludes players whose Status is in the configured IR-status set, and
-    prefers candidates with a non-zero projection over zero/null projections.
-    Returns None when no genuinely usable alternative exists.
+    Input is sorted by projection descending. IR and zero/null-projection
+    players cannot provide a usable substitute, even if they occupy BN.
     """
-    candidates: list[tuple[pd.Series, float]] = []
-    for _, row in players.iterrows():
-        if row["Name"] in used_names:
-            continue
+    for _, row in bench_players.iterrows():
         status_val = _safe_status(row.get("Status")) or ""
-        if status_val.strip() in ir_statuses:
+        if _is_ir(status_val, ir_statuses):
             continue
         player_positions = {p.strip() for p in str(row["Position"]).split(",")}
-        if player_positions & compatible:
-            proj = _safe_float(row.get(week_col))
-            candidates.append((row, proj if proj is not None else 0.0))
-
-    # Prefer a candidate with a real (non-zero) projection.
-    for row, proj in candidates:
-        if proj > 0:
+        proj = _safe_float(row.get(week_col))
+        if player_positions & compatible and proj is not None and proj > 0:
             return LineupSlot(
                 slot="BN",
                 player=str(row["Name"]),
@@ -1278,20 +1268,6 @@ def _find_bench_alternative(
                 vor=_safe_float(row.get("VOR")) or 0.0,
                 status=_safe_status(row.get("Status")) or "",
             )
-
-    # Fall back to a zero/null-projection candidate only if it's genuinely
-    # usable (not IR-status). Otherwise there's no valid alternative.
-    if candidates:
-        row, proj = candidates[0]
-        return LineupSlot(
-            slot="BN",
-            player=str(row["Name"]),
-            team=str(row["Team"]),
-            position=str(row["Position"]),
-            projection=proj,
-            vor=_safe_float(row.get("VOR")) or 0.0,
-            status=_safe_status(row.get("Status")) or "",
-        )
 
     return None
 

@@ -103,3 +103,30 @@ def test_capacity_validation_preserves_empty_roster_error():
     result = validate_roster(pd.DataFrame(), {"positions": "QB, BN, IR"})
     assert not result.legal
     assert result.errors == ["Roster is empty"]
+
+
+def test_flagged_wr_alternative_is_bench_player_not_co_starter():
+    roster = make_roster([
+        ("Questionable", "WR", 20, "Q"), ("Co-starter", "WR", 19, ""),
+        ("Actual bench", "WR", 10, ""),
+    ])
+    lineup = recommend_lineup(roster, roster, {"positions": "WR, WR, BN"}, 1)
+    flagged = lineup.flagged_starters[0]
+    assert flagged.player == "Questionable"
+    assert {s.player for s in lineup.starters} == {"Questionable", "Co-starter"}
+    assert flagged.bench_alternative == "Actual bench"
+    assert flagged.bench_alt_projection == 10
+    assert flagged.bench_alternative in {s.player for s in lineup.bench}
+    assert flagged.bench_alternative not in {s.player for s in lineup.starters}
+
+
+@pytest.mark.parametrize("projection", [0, None])
+def test_flagged_starter_has_no_alternative_when_bench_is_unusable(projection):
+    roster = make_roster([
+        ("Questionable", "WR", 20, "Q"), ("Co-starter", "WR", 19, ""),
+        ("Unavailable bench", "WR", projection, ""), ("IR bench", "WR", 30, "IR"),
+    ])
+    lineup = recommend_lineup(roster, roster, {"positions": "WR, WR, BN, IR"}, 1)
+    assert lineup.flagged_starters[0].bench_alternative is None
+    assert lineup.flagged_starters[0].bench_alt_projection is None
+    assert any("no bench alternative" in warning for warning in lineup.warnings)
