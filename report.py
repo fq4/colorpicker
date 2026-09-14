@@ -414,7 +414,7 @@ def build_markdown_report(
     # 6. Season-long tracking note
     lines.append("## Tracking")
     lines.append("")
-    filename = f"league_{config.get('league_id', 'N/A')}_team_{config.get('team_id', 'N/A')}_week_{current_week}.md"
+    filename = _report_filename(current_week, config.get('league_id', 'N/A'), config.get('team_id', 'N/A'), report.hypothetical_drop)
     lines.append(f"This report is saved as `reports/{filename}` for season-long accuracy tracking.")
     lines.append("")
 
@@ -565,10 +565,15 @@ def _md_float(val, signed: bool = False) -> str:
 # ── Save ──────────────────────────────────────────────────────────────────
 
 
-def save_markdown_report(content: str, week: int, league_id: int, team_id: int, reports_dir: str = REPORTS_DIR) -> str:
-    """Write the markdown report to reports/league_{league_id}_team_{team_id}_week_{n}.md."""
+def _report_filename(week, league_id, team_id, hypothetical_drop=None) -> str:
+    suffix = "_hypothetical" if hypothetical_drop else ""
+    return f"league_{league_id}_team_{team_id}_week_{week}{suffix}.md"
+
+
+def save_markdown_report(content: str, week: int, league_id: int, team_id: int, reports_dir: str = REPORTS_DIR, hypothetical_drop: Optional[str] = None) -> str:
+    """Save hypothetical reports separately from the real weekly report."""
     os.makedirs(reports_dir, exist_ok=True)
-    path = os.path.join(reports_dir, f"league_{league_id}_team_{team_id}_week_{week}.md")
+    path = os.path.join(reports_dir, _report_filename(week, league_id, team_id, hypothetical_drop))
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     logger.info(f"Report saved to {path}")
@@ -582,9 +587,10 @@ def save_both(
     league_id: int,
     team_id: int,
     reports_dir: str = REPORTS_DIR,
+    hypothetical_drop: Optional[str] = None,
 ) -> str:
     """Save only the markdown version; the terminal version is printed to stdout."""
-    return save_markdown_report(markdown_report, week, league_id, team_id, reports_dir)
+    return save_markdown_report(markdown_report, week, league_id, team_id, reports_dir, hypothetical_drop=hypothetical_drop)
 
 
 # ── Action Plan formatting ──────────────────────────────────────────────

@@ -366,6 +366,7 @@ def main():
         md_report, actual_week,
         league_id=config["league_id"],
         team_id=config["team_id"],
+        hypothetical_drop=report.hypothetical_drop,
     )
 
     # Execute (only if --execute)
