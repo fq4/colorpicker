@@ -1088,18 +1088,10 @@ def recommend_lineup(
     # Make a working copy sorted by projection
     players = players.sort_values(by=week_col, ascending=False).reset_index(drop=True)
 
+    optimal_players = _optimal_slot_assignments(players, slot_order, week_col)
     for slot_idx, slot_type in enumerate(slot_order):
         compatible = SLOT_POSITION_MAP.get(slot_type, set())
-
-        # Find best available player who can fill this slot
-        best = None
-        for _, row in players.iterrows():
-            if row["Name"] in used_names:
-                continue
-            player_positions = {p.strip() for p in str(row["Position"]).split(",")}
-            if player_positions & compatible:
-                best = row
-                break  # players are sorted by projection desc
+        best = optimal_players.get(slot_idx)
 
         if best is not None:
             used_names.add(best["Name"])
@@ -1183,6 +1175,37 @@ def recommend_lineup(
     bench_slots.extend(ir_slots)
 
     return result
+
+
+def _optimal_slot_assignments(
+    players: pd.DataFrame, slots: list[str], week_col: str,
+) -> dict[int, pd.Series]:
+    """Maximize projection across assignments filling the most possible slots.
+
+    For each player, retain the best assignment for each set of occupied slots.
+    A bit in the mask represents one slot, including repeated slots separately.
+    Each round reads only the previous round, so no player can fill two slots.
+    With nine starting slots there are at most 512 states, avoiding factorial
+    enumeration while considering every combination of position eligibility.
+    """
+    states = {0: (0.0, {})}
+    for _, player in players.drop_duplicates(subset="Name").iterrows():
+        positions = {p.strip() for p in str(player["Position"]).split(",")}
+        eligible = [i for i, slot in enumerate(slots) if positions & SLOT_POSITION_MAP.get(slot, set())]
+        projection = _safe_float(player.get(week_col)) or 0.0
+        next_states = dict(states)  # Leaving this player on the bench is valid.
+        for mask, (score, assignment) in states.items():
+            for slot_idx in eligible:
+                bit = 1 << slot_idx
+                if mask & bit:
+                    continue
+                next_mask = mask | bit
+                next_score = score + projection
+                if next_mask not in next_states or next_score > next_states[next_mask][0]:
+                    next_states[next_mask] = (next_score, {**assignment, slot_idx: player})
+        states = next_states
+    best_mask = max(states, key=lambda mask: (mask.bit_count(), states[mask][0]))
+    return states[best_mask][1]
 
 
 def _slot_order(starting_slots: list[str]) -> list[str]:
