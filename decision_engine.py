@@ -1601,8 +1601,8 @@ def _generate_comparison_notes(
                 if bench_proj > starter_proj and pair_key not in seen_pairs:
                     seen_pairs.add(pair_key)
                     notes.append(
-                        bench_name + chr(32)+chr(40)+bench_pos+chr(44)+chr(32)+str(bench_proj)+chr(41)+chr(32)+chr(115)+chr(116)+chr(97)+chr(114)+chr(116)+chr(115)+chr(32)+chr(111)+chr(118)+chr(101)+chr(114)+chr(32)
-                        + starter_name + chr(32)+chr(40)+starter_pos+chr(44)+chr(32)+str(starter_proj)+chr(41)+chr(32)+chr(45)+chr(32)+chr(104)+chr(105)+chr(103)+chr(104)+chr(101)+chr(114)+chr(32)+chr(112)+chr(114)+chr(111)+chr(106)+chr(101)+chr(99)+chr(116)+chr(105)+chr(111)+chr(110)
+                        f"{bench_name} ({bench_pos}, {bench_proj}) starts over "
+                        f"{starter_name} ({starter_pos}, {starter_proj}) - higher projection"
                     )
 
     return notes

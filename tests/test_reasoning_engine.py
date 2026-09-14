@@ -201,14 +201,28 @@ def test_reasoning_engine_enabled_via_config_creates_dedicated_detail_section(mo
 
 
 def test_flag_reason_uses_pipe_separator_when_combining_existing_flags_and_illegality(mock_df, mock_config):
+    """When the reasoning engine flags a transaction as illegal and the rec
+    already has a pre-existing flag, both must be joined with ' | '.
+
+    We set K bench-depth minimum to 2 so the roster has a genuine bench-depth
+    gap at K before any move. Dropping Jake Elliott (a K) while adding Brandon
+    Aubrey (a K) does not fix the bench-depth gap — both starters occupy the
+    single K starter slot, leaving zero bench K's. This triggers the
+    'exacerbates existing bench depth gap' flag BEFORE the reasoning engine
+    appends its illegality message, so the test exercises the ' | ' joins.    """
+    import pandas as pd
+    from unittest.mock import patch
+
+    config = dict(mock_config)
+    config["reasoning_engine"] = {"enabled": True}
+    config["bench_depth_minimums"] = {"RB": 1, "WR": 1, "QB": 1, "TE": 0, "K": 2}
+
     roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
     optimizer = pd.DataFrame({
         "Add": ["Brandon Aubrey (K)"],
         "Drop": ["Jake Elliott (K)"],
         "VOR": [2.0],
     })
-    config = dict(mock_config)
-    config["reasoning_engine"] = {"enabled": True}
     with patch("ffbot.optimize", return_value=optimizer), patch("reasoning_engine.evaluate_transaction") as mock_eval:
         mock_eval.return_value = SimpleNamespace(
             current_week_delta=-1.0,
@@ -243,10 +257,25 @@ def test_cli_flag_enables_reasoning_engine_for_single_run(monkeypatch):
         "bench_depth_minimums": {},
         "ir_statuses": ["IR"],
         "llm_evaluator": {"enabled": False},
-    }), patch("run_weekly.setup_logging"), patch("run_weekly.run_weekly") as mock_run:
+    }), patch("run_weekly.setup_logging"), patch("run_weekly.run_weekly") as mock_run, patch(
+        "run_weekly.save_markdown_report"
+    ):
+        mock_run.return_value = SimpleNamespace(
+            week=1,
+            my_roster=None,
+            lineup=None,
+            add_drop_recs=[],
+            low_value_recs=[],
+            depth_warnings=[],
+            bye_week_warnings=[],
+            action_plan=None,
+            hypothetical_drop=None,
+            llm_evaluation=None,
+            llm_evaluation_error=None,
+        )
         run_weekly.main()
 
-    assert mock_run.call_args.kwargs["config"]["reasoning_engine"]["enabled"] is True
+    assert mock_run.call_args.args[0]["reasoning_engine"]["enabled"] is True
 
 
 def test_contradiction_check_rejects_inconsistent_classification():
