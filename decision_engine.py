@@ -8,7 +8,7 @@ the same data without parsing strings.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 import pandas as pd
@@ -1375,6 +1375,8 @@ def build_action_plan(
     projected_size = current_roster_size + net_moves
 
     suggested: list[dict] = []
+    locked_positions = _parse_locked_positions(positions_config)
+    locked_drop_candidates = False
     if projected_size > max_roster_size:
         excess = projected_size - max_roster_size
         # Identify lowest-VOR bench players in the CURRENT roster as drop candidates,
@@ -1386,6 +1388,9 @@ def build_action_plan(
         for _, row in bench_df.iterrows():
             name = str(row.get("Name", ""))
             if name in starter_names or name in ir_names:
+                continue
+            if _is_position_locked(row.get("Position"), locked_positions):
+                locked_drop_candidates = True
                 continue
             suggested.append({
                 "name": name,
@@ -1402,6 +1407,7 @@ def build_action_plan(
     roster_size = current_roster_size
     suggested_iter = iter(suggested)
     drops_inserted = 0
+    blocked_warnings: list[RosterLimitWarning] = []
 
     for move in moves:
         # If this is a pure add and roster is already full, insert a drop first
@@ -1409,8 +1415,18 @@ def build_action_plan(
             try:
                 drop_candidate = next(suggested_iter)
             except StopIteration:
-                # No more candidates; keep the move as-is and let it overflow
-                adjusted_moves.append(move)
+                message = (
+                    "Cannot free a roster slot without touching a locked position — resolve manually"
+                    if locked_drop_candidates else
+                    "Cannot free a roster slot without dropping a starter or IR player — resolve manually"
+                )
+                skipped.append(replace(move, flagged=True, flag_reason=message))
+                blocked_warnings.append(RosterLimitWarning(
+                    current_size=roster_size,
+                    max_size=max_roster_size,
+                    excess=1,
+                    message=f"{message}. Skipped add: {move.add}.",
+                ))
                 continue
 
             # Create a mandatory drop recommendation
@@ -1504,7 +1520,7 @@ def build_action_plan(
         skipped_recs=skipped,
         simulated_roster=simulated,
         final_lineup=final_lineup,
-        remaining_warnings=remaining_warnings + roster_limit_warnings,
+        remaining_warnings=remaining_warnings + roster_limit_warnings + blocked_warnings,
         comparison_notes=comparison_notes,
     )
 

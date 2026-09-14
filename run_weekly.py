@@ -79,6 +79,7 @@ def build_positions_config(config: dict) -> dict:
         "bench_depth_minimums": config.get("bench_depth_minimums", {}),
         "ir_statuses": config.get("ir_statuses", []),
         "min_usable_projection": config.get("min_usable_projection", 1.0),
+        "locked_positions": config.get("locked_positions", []),
     }
 
 
