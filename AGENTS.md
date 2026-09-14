@@ -152,6 +152,12 @@ unique per league/team/week so different runs never overwrite each other.
    structured reasoning ledger. Do not treat positive incoming-player VOR as sufficient
    evidence of a good transaction, and do not let LLM output override these calculations.
 
+**Opt-in gating for the reasoning engine:** `reasoning_engine` is disabled by default via
+`config.yaml` and is not part of the core recommendation pipeline. It is only activated when
+`reasoning_engine.enabled` is set to `true` in config or `--reasoning-engine` is passed on a run.
+This feature was originally added without explicit request and is intentionally gated so it does
+not silently change the default behavior or surface extra output on normal runs.
+
 ## Automation / executor.py — investigated, deliberately NOT built
 
 An investigation (see git history / prior session) confirmed:

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import pandas as pd
 
-from decision_engine import AddDropRecommendation, get_my_roster
+from decision_engine import AddDropRecommendation, get_my_roster, recommend_adds_drops
+from report import build_markdown_report, build_terminal_report
 from reasoning_engine import (
     NO_STARTER_CHANGE,
     STARTER_UPGRADE,
@@ -63,23 +67,186 @@ def test_oversized_and_duplicate_rosters_are_illegal(mock_df, mock_config, posit
 
 
 def test_recommendation_carries_reasoning_ledger(mock_df, mock_config, positions_config):
-    from unittest.mock import patch
-    from decision_engine import recommend_adds_drops
-
     roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
     optimizer = pd.DataFrame({
         "Add": ["Brandon Aubrey (K)"],
         "Drop": ["Jake Elliott (K)"],
         "VOR": [2.0],
     })
+    config = dict(mock_config)
+    config["reasoning_engine"] = {"enabled": True}
     with patch("ffbot.optimize", return_value=optimizer):
-        recs = recommend_adds_drops(mock_df, roster, WEEK, mock_config)
+        recs = recommend_adds_drops(mock_df, roster, WEEK, config)
 
     assert len(recs) == 1
     assert recs[0].reasoning_ledger is not None
     assert recs[0].current_week_delta is not None
     assert recs[0].transaction_classification is not None
     assert recs[0].reasoning_confidence in {"MUST_DO", "STRONG", "LEAN", "SPECULATIVE", "DO_NOT_MAKE"}
+    assert recs[0].reasoning_detail is not None
+    assert "Reasoning Engine Detail" not in recs[0].reason
+
+
+def test_reasoning_engine_disabled_by_default_skips_evaluation_and_output(mock_df, mock_config):
+    roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
+    optimizer = pd.DataFrame({
+        "Add": ["Brandon Aubrey (K)"],
+        "Drop": ["Jake Elliott (K)"],
+        "VOR": [2.0],
+    })
+    with patch("ffbot.optimize", return_value=optimizer), patch("reasoning_engine.evaluate_transaction") as mock_eval:
+        recs = recommend_adds_drops(mock_df, roster, WEEK, mock_config)
+
+    assert len(recs) == 1
+    assert recs[0].reasoning_ledger is None
+    assert recs[0].reasoning_detail is None
+    mock_eval.assert_not_called()
+
+    terminal = build_terminal_report(recs[0] and SimpleNamespace(
+        my_roster=roster,
+        depth_warnings=[],
+        bye_week_warnings=[],
+        lineup=None,
+        add_drop_recs=recs,
+        low_value_recs=[],
+        action_plan=None,
+        week=WEEK,
+        hypothetical_drop=None,
+        llm_evaluation=None,
+        llm_evaluation_error=None,
+        llm_evaluation_prompt=None,
+    ), WEEK, 2026, mock_config)
+    markdown = build_markdown_report(SimpleNamespace(
+        my_roster=roster,
+        depth_warnings=[],
+        bye_week_warnings=[],
+        lineup=None,
+        add_drop_recs=recs,
+        low_value_recs=[],
+        action_plan=None,
+        week=WEEK,
+        hypothetical_drop=None,
+        llm_evaluation=None,
+        llm_evaluation_error=None,
+        llm_evaluation_prompt=None,
+    ), WEEK, 2026, mock_config)
+    assert "Reasoning Engine Detail" not in terminal
+    assert "Reasoning Engine Detail" not in markdown
+    assert "Transaction analysis:" not in terminal
+    assert "Transaction analysis:" not in markdown
+
+
+def test_reasoning_engine_enabled_via_config_creates_dedicated_detail_section(mock_df, mock_config):
+    roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
+    optimizer = pd.DataFrame({
+        "Add": ["Brandon Aubrey (K)"],
+        "Drop": ["Jake Elliott (K)"],
+        "VOR": [2.0],
+    })
+    config = dict(mock_config)
+    config["reasoning_engine"] = {"enabled": True}
+    with patch("ffbot.optimize", return_value=optimizer), patch("reasoning_engine.evaluate_transaction") as mock_eval:
+        mock_eval.return_value = SimpleNamespace(
+            current_week_delta=2.5,
+            ros_delta=4.0,
+            vor_delta=1.5,
+            starter_impact="STARTER_UPGRADE",
+            classification="STARTER_UPGRADE",
+            confidence="STRONG",
+            drop_resistance=2.0,
+            ledger={"summary": "ok"},
+            contradictions=[],
+            legal=True,
+            errors=[],
+        )
+        recs = recommend_adds_drops(mock_df, roster, WEEK, config)
+
+    assert len(recs) == 1
+    assert recs[0].reasoning_detail is not None
+    assert "Classification: STARTER_UPGRADE" in recs[0].reasoning_detail
+    assert "Confidence: STRONG" in recs[0].reasoning_detail
+
+    terminal = build_terminal_report(SimpleNamespace(
+        my_roster=roster,
+        depth_warnings=[],
+        bye_week_warnings=[],
+        lineup=None,
+        add_drop_recs=recs,
+        low_value_recs=[],
+        action_plan=None,
+        week=WEEK,
+        hypothetical_drop=None,
+        llm_evaluation=None,
+        llm_evaluation_error=None,
+        llm_evaluation_prompt=None,
+    ), WEEK, 2026, config)
+    markdown = build_markdown_report(SimpleNamespace(
+        my_roster=roster,
+        depth_warnings=[],
+        bye_week_warnings=[],
+        lineup=None,
+        add_drop_recs=recs,
+        low_value_recs=[],
+        action_plan=None,
+        week=WEEK,
+        hypothetical_drop=None,
+        llm_evaluation=None,
+        llm_evaluation_error=None,
+        llm_evaluation_prompt=None,
+    ), WEEK, 2026, config)
+    assert "Reasoning Engine Detail" in terminal
+    assert "Reasoning Engine Detail" in markdown
+    assert "Classification: STARTER_UPGRADE" in terminal
+    assert "Classification: STARTER_UPGRADE" in markdown
+
+
+def test_flag_reason_uses_pipe_separator_when_combining_existing_flags_and_illegality(mock_df, mock_config):
+    roster = get_my_roster(mock_df, mock_config["team_name"], WEEK)
+    optimizer = pd.DataFrame({
+        "Add": ["Brandon Aubrey (K)"],
+        "Drop": ["Jake Elliott (K)"],
+        "VOR": [2.0],
+    })
+    config = dict(mock_config)
+    config["reasoning_engine"] = {"enabled": True}
+    with patch("ffbot.optimize", return_value=optimizer), patch("reasoning_engine.evaluate_transaction") as mock_eval:
+        mock_eval.return_value = SimpleNamespace(
+            current_week_delta=-1.0,
+            ros_delta=-2.0,
+            vor_delta=-3.0,
+            starter_impact="NO_STARTER_CHANGE",
+            classification="NO_MEANINGFUL_IMPROVEMENT",
+            confidence="DO_NOT_MAKE",
+            drop_resistance=0.1,
+            ledger={"summary": "ok"},
+            contradictions=[],
+            legal=False,
+            errors=["Illegal transaction: drop not on roster"],
+        )
+        recs = recommend_adds_drops(mock_df, roster, WEEK, config)
+
+    assert len(recs) == 1
+    assert " | " in recs[0].flag_reason
+    assert "; " not in recs[0].flag_reason
+    assert "Illegal transaction" in recs[0].flag_reason
+    assert recs[0].flag_reason.count("Illegal transaction") == 1
+
+
+def test_cli_flag_enables_reasoning_engine_for_single_run(monkeypatch):
+    import run_weekly
+
+    monkeypatch.setattr("sys.argv", ["run_weekly.py", "--reasoning-engine"])
+    with patch("run_weekly.load_config", return_value={
+        "league_id": 1,
+        "team_id": 1,
+        "positions": "QB, WR, RB, BN",
+        "bench_depth_minimums": {},
+        "ir_statuses": ["IR"],
+        "llm_evaluator": {"enabled": False},
+    }), patch("run_weekly.setup_logging"), patch("run_weekly.run_weekly") as mock_run:
+        run_weekly.main()
+
+    assert mock_run.call_args.kwargs["config"]["reasoning_engine"]["enabled"] is True
 
 
 def test_contradiction_check_rejects_inconsistent_classification():

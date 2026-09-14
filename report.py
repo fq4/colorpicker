@@ -243,6 +243,11 @@ def _format_add_drop_rec_terminal(i: int, rec: AddDropRecommendation, week: int)
 
     lines.append(f"     Reason: {rec.reason}")
 
+    if rec.reasoning_detail:
+        lines.append("     Reasoning Engine Detail:")
+        for part in rec.reasoning_detail.split(" | "):
+            lines.append(f"       - {part}")
+
     if rec.flagged and rec.flag_reason:
         lines.append(f"     ⚠️ FLAG: {rec.flag_reason}")
 
@@ -536,6 +541,11 @@ def _md_add_drop_rec(i: int, rec: AddDropRecommendation, week: int) -> str:
 
     lines.append("")
     lines.append(f"**Reason:** {rec.reason}")
+    if rec.reasoning_detail:
+        lines.append("")
+        lines.append("### Reasoning Engine Detail")
+        for part in rec.reasoning_detail.split(" | "):
+            lines.append(f"- {part}")
     lines.append("")
     return "\n".join(lines)
 

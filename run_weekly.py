@@ -311,6 +311,10 @@ def main():
         "--llm-evaluate", action="store_true", default=False,
         help="Enable the optional independent LLM assessment for this run",
     )
+    parser.add_argument(
+        "--reasoning-engine", action="store_true", default=False,
+        help="Enable the optional deterministic reasoning engine for this run",
+    )
     args = parser.parse_args()
 
     dry_run = args.dry_run or not args.execute
@@ -337,6 +341,8 @@ def main():
         config["locked_positions"] = [p.strip() for p in args.locked_positions.split(",") if p.strip()]
     if args.llm_evaluate:
         config.setdefault("llm_evaluator", {})["enabled"] = True
+    if args.reasoning_engine:
+        config.setdefault("reasoning_engine", {})["enabled"] = True
 
     # Run pipeline (run_weekly will derive team_name from team_id via the df)
     report = run_weekly(config, week=args.week, force_refresh=args.force_refresh, hypothetical_drop=args.hypothetical_drop)

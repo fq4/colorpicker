@@ -44,6 +44,9 @@ llm_evaluator:
   api_key_env: "OPENAI_API_KEY"
   timeout_seconds: 60
 
+reasoning_engine:
+  enabled: false
+
 # injury statuses that prevent a player from being used as bench depth
 # (true IR-slot eligibility only — "O" is a game-day designation, not IR)
 ir_statuses:
