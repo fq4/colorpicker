@@ -64,17 +64,17 @@ def validate_roster(
     require_bench_depth: bool = True,
 ) -> RosterValidation:
     """Validate size, uniqueness, startability, eligibility, and depth."""
-    from decision_engine import flag_bench_depth_gaps, get_starting_slots, parse_positions, recommend_lineup
+    from decision_engine import _roster_capacity, flag_bench_depth_gaps, get_starting_slots, parse_positions, recommend_lineup
 
     errors: list[str] = []
     warnings: list[str] = []
     slots = parse_positions(positions_config["positions"])
-    max_size = len(slots)
-    if len(roster) > max_size:
-        errors.append(f"Roster has {len(roster)} players but capacity is {max_size}")
     if roster.empty:
         errors.append("Roster is empty")
         return RosterValidation(False, errors, warnings)
+    max_size = _roster_capacity(roster, positions_config)
+    if len(roster) > max_size:
+        errors.append(f"Roster has {len(roster)} players but capacity is {max_size}")
 
     names = roster["Name"].astype(str)
     duplicates = names[names.duplicated()].unique().tolist()

@@ -245,6 +245,19 @@ def _is_ir(status: Optional[str], ir_statuses: set[str]) -> bool:
     return False
 
 
+def _roster_capacity(my_roster: pd.DataFrame, positions_config: dict) -> int:
+    """Normal slots plus IR slots actually usable by this roster.
+
+    Extra IR-status players occupy normal capacity but remain unusable depth.
+    Empty IR slots cannot be used to hold healthy players.
+    """
+    slots = parse_positions(positions_config["positions"])
+    ir_slots = sum(slot in IR_SLOTS for slot in slots)
+    ir_statuses = _parse_ir_statuses(positions_config)
+    ir_players = sum(_is_ir(status, ir_statuses) for status in my_roster["Status"])
+    return len(slots) - ir_slots + min(ir_slots, ir_players)
+
+
 # --------------------------------------------------------------------------- #
 #  1. get_my_roster                                                           #
 # --------------------------------------------------------------------------- #
@@ -1051,27 +1064,25 @@ def recommend_lineup(
     # my_roster has: Name, Team, Position, Status, Week {n}, VOR
     players = my_roster.copy()
 
-    # Fill IR slot with injured players
+    # IR status always prevents starting. Only configured IR slots exempt
+    # these players from normal bench capacity; excess players remain on BN.
     ir_slots: list[LineupSlot] = []
-    if "IR" in slots:
-        ir_players = players[
-            players["Status"].apply(lambda s: _is_ir(s, ir_statuses))
-        ]
-        for _, ir_row in ir_players.iterrows():
-            ir_slots.append(
-                LineupSlot(
-                    slot="IR",
-                    player=str(ir_row["Name"]),
-                    team=str(ir_row["Team"]),
-                    position=str(ir_row["Position"]),
-                    projection=_safe_float(ir_row.get(week_col)) or 0.0,
-                    vor=_safe_float(ir_row.get("VOR")) or 0.0,
-                    status=_safe_status(ir_row.get("Status")) or "",
-                )
+    ir_mask = players["Status"].apply(lambda s: _is_ir(s, ir_statuses)).astype(bool)
+    ir_players = players[ir_mask]
+    ir_capacity = sum(slot in IR_SLOTS for slot in slots)
+    for index, (_, ir_row) in enumerate(ir_players.iterrows()):
+        ir_slots.append(
+            LineupSlot(
+                slot="IR" if index < ir_capacity else "BN",
+                player=str(ir_row["Name"]),
+                team=str(ir_row["Team"]),
+                position=str(ir_row["Position"]),
+                projection=_safe_float(ir_row.get(week_col)) or 0.0,
+                vor=_safe_float(ir_row.get("VOR")) or 0.0,
+                status=_safe_status(ir_row.get("Status")) or "",
             )
-        players = players[
-            ~players["Status"].apply(lambda s: _is_ir(s, ir_statuses))
-        ]
+        )
+    players = players[~ir_mask]
 
     # Separate players by eligibility
     # A player is eligible for a slot if their Position includes any position
@@ -1389,7 +1400,7 @@ def build_action_plan(
         if _is_ir(row.get("Status"), ir_statuses):
             ir_names.add(str(row.get("Name", "")))
 
-    max_roster_size = len(parse_positions(positions_config["positions"]))
+    max_roster_size = _roster_capacity(my_roster, positions_config)
     current_roster_size = len(my_roster)
     net_moves = (
         sum(1 for r in moves if r.add)
