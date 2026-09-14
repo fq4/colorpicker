@@ -154,7 +154,12 @@ def build_terminal_report(
 
     # 6. Optional independent assessment; deterministic recommendations remain authoritative.
     if report.llm_evaluation or report.llm_evaluation_error:
-        lines.append(_format_llm_assessment_terminal(report))
+        try:
+            lines.append(_format_llm_assessment_terminal(report))
+        except Exception:
+            # Only the optional section may fail; never include provider data in logs.
+            logger.warning("LLM assessment unavailable — response was malformed during terminal formatting")
+            lines.append("⚠️ LLM assessment unavailable — response was malformed")
         lines.append("")
 
     # 7. Action Plan (terminal)
@@ -401,7 +406,12 @@ def build_markdown_report(
 
     # 6. Optional independent assessment; deterministic recommendations remain authoritative.
     if report.llm_evaluation or report.llm_evaluation_error:
-        lines.append(_format_llm_assessment_markdown(report))
+        try:
+            lines.append(_format_llm_assessment_markdown(report))
+        except Exception:
+            # Keep all deterministic sections and the saved report available.
+            logger.warning("LLM assessment unavailable — response was malformed during Markdown formatting")
+            lines.append("⚠️ LLM assessment unavailable — response was malformed")
         lines.append("")
 
     # 7. Action Plan (markdown)

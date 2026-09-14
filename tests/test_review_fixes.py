@@ -67,3 +67,33 @@ def test_cli_passes_hypothetical_report_to_save(tmp_path):
          patch.object(run_weekly, "save_markdown_report") as save:
         run_weekly.main()
     assert save.call_args.kwargs["hypothetical_drop"] == "Player"
+
+
+@pytest.mark.parametrize("malformed", [{"engine_agreements": 42}, {"transactions": [42]}, 42])
+@pytest.mark.parametrize("formatter", [build_terminal_report, build_markdown_report])
+def test_malformed_llm_section_preserves_deterministic_report(
+    malformed, formatter, mock_df, mock_config, tmp_path,
+):
+    from decision_engine import get_my_roster
+
+    roster = get_my_roster(mock_df, mock_config["team_name"], 3)
+    positions = build_positions_config(mock_config)
+    lineup = recommend_lineup(mock_df, roster, positions, 3)
+    rec = AddDropRecommendation(action="fa_add", add="Brandon Aubrey", add_position="K", vor_gain=6)
+    plan = build_action_plan(mock_df, roster, [rec], positions, 3, lineup)
+    report = RecommendationReport(my_roster=roster, lineup=lineup, add_drop_recs=[rec], action_plan=plan)
+    # Freeze the generated timestamp so the comparison cannot cross a minute boundary.
+    with patch("report.datetime") as clock:
+        clock.now.return_value.strftime.return_value = "2026-09-14 12:00"
+        baseline = formatter(report, 3, 2026, mock_config)
+        report.llm_evaluation = malformed
+        with patch("report.logger.warning") as warning:
+            rendered = formatter(report, 3, 2026, mock_config)
+        warning.assert_called_once()
+        assert "response was malformed" in warning.call_args.args[0]
+    fallback = "⚠️ LLM assessment unavailable — response was malformed"
+    assert fallback in rendered
+    assert rendered.replace(fallback + "\n\n", "") == baseline
+    if formatter is build_markdown_report:
+        saved = Path(save_markdown_report(rendered, 3, 123, 7, str(tmp_path)))
+        assert saved.read_text(encoding="utf-8") == rendered
