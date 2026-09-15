@@ -12,6 +12,7 @@ import ffbot
 from loguru import logger
 
 DATA_DIR = "data"
+RESULTS_DIR = "results"
 DEFAULT_CONFIG_PATH = "config.yaml"
 
 
@@ -33,7 +34,6 @@ def save_weekly_cache(df, week, data_dir=DATA_DIR, league_id=None):
     """
     os.makedirs(data_dir, exist_ok=True)
 
-    # Save with a week-prefixed, league-scoped name for programmatic lookup
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     prefix = f"league_{league_id}_" if league_id is not None else ""
     filename = os.path.join(data_dir, f"{prefix}week_{week}_{timestamp}.csv")
@@ -104,9 +104,7 @@ def _load_cache(filepath):
         raise ValueError(f"Invalid cache filename: {filepath}")
 
     df = pd.read_csv(filepath)
-
     week = parts[0]
-
     logger.info(f"Loaded {len(df)} players from cache (week {week})")
     return df, week
 
@@ -138,7 +136,6 @@ def ensure_data_columns(df):
         if col not in df.columns:
             df[col] = None
 
-    # Ensure Week columns exist for weeks 1-18
     for w in range(1, 19):
         col = f"Week {w}"
         if col not in df.columns:
@@ -147,8 +144,82 @@ def ensure_data_columns(df):
     return df
 
 
+def capture_actual_results(
+    df,
+    league_id,
+    team_id,
+    week,
+    results_dir=RESULTS_DIR,
+):
+    """Save a team's completed-week fantasy points from a later ffbot scrape.
+
+    ffbot's scraper uses the same ``Week N`` column for both projections and
+    results. In upstream ffbot, Yahoo values prefixed with ``*`` are treated as
+    not-yet-played projections; once a game is completed, the unprefixed value
+    is parsed into that same column as the actual score. Therefore a fresh
+    scrape after the week has rolled over contains final points for prior weeks.
+
+    This function intentionally only parses/saves an already-scraped DataFrame.
+    Callers are responsible for making sure the requested week is complete.
+    """
+    if not 1 <= int(week) <= 18:
+        raise ValueError("week must be between 1 and 18")
+
+    week = int(week)
+    week_col = f"Week {week}"
+    required = {"Name", "Owner ID", week_col}
+    missing = sorted(required.difference(df.columns))
+    if missing:
+        raise ValueError(f"Scraped data is missing required columns: {missing}")
+
+    owner_ids = pd.to_numeric(df["Owner ID"], errors="coerce")
+    team_rows = df.loc[owner_ids == float(team_id), ["Name", week_col]].copy()
+    team_rows[week_col] = pd.to_numeric(team_rows[week_col], errors="coerce")
+    team_rows = team_rows.dropna(subset=["Name", week_col])
+
+    actuals = pd.DataFrame(
+        {
+            "league_id": league_id,
+            "team_id": team_id,
+            "week": week,
+            "player_name": team_rows["Name"].astype(str).str.strip(),
+            "actual_points": team_rows[week_col].astype(float),
+        }
+    ).sort_values("player_name", kind="stable").reset_index(drop=True)
+
+    os.makedirs(results_dir, exist_ok=True)
+    filename = os.path.join(
+        results_dir,
+        f"league_{league_id}_team_{team_id}_week_{week}_actuals.csv",
+    )
+    actuals.to_csv(filename, index=False)
+    logger.info(f"Saved {len(actuals)} actual results to {filename}")
+    return actuals, filename
 
 
+def fetch_and_capture_actual_results(
+    league_id,
+    team_id,
+    week,
+    is_idp=False,
+    results_dir=RESULTS_DIR,
+):
+    """Fresh-scrape Yahoo and save actual points for a completed prior week."""
+    current_week = ffbot.current_week()
+    if int(week) >= current_week:
+        raise ValueError(
+            f"Week {week} is not a completed prior week (current week is {current_week}). "
+            "Wait until Yahoo advances to the next week before capturing actuals."
+        )
+
+    df, _ = get_fresh_data(league_id, is_idp=is_idp)
+    return capture_actual_results(
+        df,
+        league_id=league_id,
+        team_id=team_id,
+        week=week,
+        results_dir=results_dir,
+    )
 
 
 def get_team_name_from_id(df, team_id):
