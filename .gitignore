@@ -4,6 +4,9 @@
 # Data caches
 data/
 
+# Captured actual results
+results/
+
 # Reports
 reports/
 
