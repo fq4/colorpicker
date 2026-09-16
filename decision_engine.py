@@ -1012,6 +1012,10 @@ def _build_add_drop_reason(
                 f"VOR gain {rec.vor_gain:+.1f} clears the streaming threshold "
                 f"({threshold:.1f}) for {position}"
             )
+        elif position and min_vor_add_config:
+            parts.append(
+                f"VOR gain {rec.vor_gain:+.1f} (below the {threshold:.1f} threshold for {position})"
+            )
         else:
             parts.append(f"VOR gain {rec.vor_gain:+.1f}")
 
