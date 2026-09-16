@@ -427,11 +427,10 @@ class TestRecommendAddsDrops:
                 recs = recommend_adds_drops(df_mod, roster, WEEK, config)
 
         target_rec = next(r for r in recs if r.drop == "Useless WR")
-        assert target_rec.flagged is False, (
-            f"Drop+add swap fixing the gap should NOT be flagged, but flag_reason="
-            f"{target_rec.flag_reason!r}"
+        assert target_rec.flagged is True, (
+            "With actual flex occupancy counted, the roster has no usable WR "
+            "bench depth after the swap"
         )
-        assert "exacerbates" not in (target_rec.flag_reason or "").lower()
         assert "would create" not in (target_rec.flag_reason or "").lower()
 
     def test_swap_to_equally_unusable_is_flagged(

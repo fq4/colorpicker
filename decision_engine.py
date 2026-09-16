@@ -677,7 +677,7 @@ def recommend_adds_drops(
     # to exclude starters from the "worst-VOR alternative" comparison pool,
     # matching the same exclusion logic used for suggested_drops)
     current_lineup = recommend_lineup(df, my_roster, positions_config, current_week)
-    depth_warnings = flag_bench_depth_gaps(my_roster, positions_config)
+    depth_warnings = flag_bench_depth_gaps(my_roster, positions_config, lineup=current_lineup)
     depth_gap_positions = {w.position for w in depth_warnings}
     starter_names = {s.player for s in current_lineup.starters}
 
@@ -773,7 +773,10 @@ def recommend_adds_drops(
                     [simulated_roster, add_player.to_frame().T],
                     ignore_index=True,
                 )
-            simulated_warnings = flag_bench_depth_gaps(simulated_roster, positions_config)
+            simulated_lineup = recommend_lineup(df, simulated_roster, positions_config, current_week)
+            simulated_warnings = flag_bench_depth_gaps(
+                simulated_roster, positions_config, lineup=simulated_lineup
+            )
             simulated_gap_positions = {w.position for w in simulated_warnings}
 
             # Flag if this drop creates a NEW depth gap not present before
@@ -1529,7 +1532,9 @@ def build_action_plan(
     final_lineup = recommend_lineup(
         df, simulated, positions_config, current_week
     )
-    remaining_warnings = flag_bench_depth_gaps(simulated, positions_config)
+    remaining_warnings = flag_bench_depth_gaps(
+        simulated, positions_config, lineup=final_lineup
+    )
 
     # Compare each add against the state Yahoo will see when that move runs:
     # earlier moves have completed, and this move's drop has happened, but
