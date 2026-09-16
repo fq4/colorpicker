@@ -281,6 +281,7 @@ def get_my_roster(
     df: pd.DataFrame,
     team_name: str,
     current_week: Optional[int] = None,
+    team_id=None,
 ) -> pd.DataFrame:
     """Filter the full df to only players on the user's team.
 
@@ -294,7 +295,11 @@ def get_my_roster(
 
     week_col = _week_col(current_week)
 
-    my_roster = df[df["Owner"] == team_name].copy()
+    if team_id is not None and "Owner ID" in df.columns:
+        owner_ids = pd.to_numeric(df["Owner ID"], errors="coerce")
+        my_roster = df[owner_ids == float(team_id)].copy()
+    else:
+        my_roster = df[df["Owner"] == team_name].copy()
 
     # Make sure all expected columns exist
     for col in ["Name", "Team", "Position", "Status", "VOR"]:

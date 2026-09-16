@@ -140,13 +140,13 @@ def run_weekly(
     print()
 
     # 2. Roster
-    my_roster = get_my_roster(df, team_name, current_week)
+    my_roster = get_my_roster(df, team_name, current_week, team_id=config["team_id"])
     logger.info(f"Roster: {len(my_roster)} players for '{team_name}'")
 
     # Optional hypothetical drop (in-memory only, never touches Yahoo or cache)
     if hypothetical_drop:
         df = df.copy()
-        my_roster = get_my_roster(df, team_name, current_week)
+        my_roster = get_my_roster(df, team_name, current_week, team_id=config["team_id"])
         mask = my_roster["Name"].str.lower() != hypothetical_drop.strip().lower()
         removed = int((~mask).sum())
         my_roster = my_roster[mask].reset_index(drop=True)
