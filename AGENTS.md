@@ -62,7 +62,7 @@ never committed. Template is `.env.example`.
 
 ```
 config.yaml          Defaults for league_id, team_id, positions, thresholds
-data_layer.py         get_fresh_data(), caching via ffbot's save()/load(),
+data_layer.py         get_fresh_data(), direct CSV caching,
                        get_latest_cached_or_fresh(max_age_hours),
                        get_team_name_from_id()
 decision_engine.py     Core logic: get_my_roster(), flag_bench_depth_gaps(),
