@@ -152,6 +152,7 @@ class RecommendationReport:
     llm_evaluation: Optional[dict] = None
     llm_evaluation_error: Optional[str] = None
     llm_evaluation_prompt: Optional[str] = None
+    warnings: list[str] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -686,7 +687,10 @@ def recommend_adds_drops(
         opt_df = ffbot.optimize(df, current_week, team_id, positions_str)
     except Exception as e:
         logger.error(f"Optimizer failed: {e}")
+        recommend_adds_drops.last_error = "⚠️ Optimizer failed — no recommendations could be generated this run"
         return []
+
+    recommend_adds_drops.last_error = None
 
     recs: list[AddDropRecommendation] = []
 

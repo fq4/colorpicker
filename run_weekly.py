@@ -117,6 +117,11 @@ def run_weekly(
     else:
         df, fetched_week = get_latest_cached_or_fresh(league_id, is_idp, max_age_hours=max_age)
     if week is None:
+        if not force_refresh and fetched_week != current_week:
+            logger.warning(
+                f"Using cached Week {fetched_week} data; current week is now Week {current_week} — "
+                "consider --force-refresh"
+            )
         current_week = fetched_week
 
     # Ensure expected columns exist
@@ -200,6 +205,7 @@ def run_weekly(
         action_plan=action_plan,
         week=current_week,
         hypothetical_drop=hypothetical_drop,
+        warnings=([recommend_adds_drops.last_error] if getattr(recommend_adds_drops, "last_error", None) else []),
     )
 
     # The evaluator is strictly optional and receives the already-fetched data

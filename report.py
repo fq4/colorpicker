@@ -89,6 +89,11 @@ def build_terminal_report(
     lines.append(bar)
     lines.append("")
 
+    for warning in report.warnings:
+        lines.append(f"  {warning}")
+    if report.warnings:
+        lines.append("")
+
     if report.hypothetical_drop:
         lines.append(f"  ⚠️  HYPOTHETICAL: roster shown assumes {report.hypothetical_drop} has already been dropped — this is a what-if simulation, no data was changed")
         lines.append("")
@@ -621,7 +626,10 @@ def _format_action_plan_terminal(plan: ActionPlan, week: int) -> str:
         lines.append("")
         for i, rec in enumerate(plan.moves, 1):
             if rec.drop:
-                lines.append(f"  {i}. Add {rec.add} ({rec.add_position}) - drop {rec.drop} ({rec.drop_position})")
+                if rec.add:
+                    lines.append(f"  {i}. Add {rec.add} ({rec.add_position}) - drop {rec.drop} ({rec.drop_position})")
+                else:
+                    lines.append(f"  {i}. Drop {rec.drop} ({rec.drop_position})")
             else:
                 lines.append(f"  {i}. Add {rec.add} ({rec.add_position})")
 
@@ -727,7 +735,10 @@ def _md_action_plan(plan: ActionPlan, week: int) -> str:
         lines.append("")
         for i, rec in enumerate(plan.moves, 1):
             if rec.drop:
-                lines.append(f"{i}. **Add:** {rec.add} ({rec.add_position}, {rec.add_team}) - **Drop:** {rec.drop} ({rec.drop_position})")
+                if rec.add:
+                    lines.append(f"{i}. **Add:** {rec.add} ({rec.add_position}, {rec.add_team}) - **Drop:** {rec.drop} ({rec.drop_position})")
+                else:
+                    lines.append(f"{i}. **Drop:** {rec.drop} ({rec.drop_position})")
             else:
                 lines.append(f"{i}. **Add:** {rec.add} ({rec.add_position}, {rec.add_team})")
 
