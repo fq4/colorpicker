@@ -72,7 +72,7 @@ python run_weekly.py --llm-evaluate
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--dry-run` | bool | `True` | Show recommendations without executing |
-| `--execute` | bool | `False` | Submit recommendations via Yahoo API |
+| `--execute` | bool | `False` | Request execution; currently executor stubs submit nothing |
 | `--force-refresh` | bool | `False` | Bypass cache and re-scrape Yahoo data |
 | `--week N` | int | auto-detected | Override the week number |
 | `--config PATH` | str | `config.yaml` | Path to config file |
@@ -117,7 +117,6 @@ python run_weekly.py --league-id 999 --team-id 3 --scoring-type standard --force
 | `ir_statuses` | Injury statuses that disqualify a player from bench depth | Standard IR statuses |
 | `min_usable_projection` | Floor projection for a player to count as usable depth | Default `1.0` |
 | `min_vor_gain_to_recommend_add` | Per-position VOR threshold for add recommendations | Tune over time |
-| `min_vor_loss_to_flag_drop` | VOR threshold below which a drop is flagged | Default `-50.0` |
 | `llm_evaluator` | Optional second-opinion provider, model, timeout, and candidate limit | Disabled by default |
 
 ### Important notes
@@ -141,7 +140,7 @@ python run_weekly.py --league-id 999 --team-id 3 --scoring-type standard --force
 config.yaml          Defaults for league_id, team_id, positions, thresholds
 data_layer.py         get_fresh_data(), caching via ffbot's save()/load(),
                        get_latest_cached_or_fresh(max_age_hours),
-                       get_team_name_from_id(), validate_team_identifiers()
+                       get_team_name_from_id()
 decision_engine.py     Core logic: get_my_roster(), flag_bench_depth_gaps(),
                        recommend_adds_drops(), recommend_lineup(),
                        build_action_plan(), simulate_post_move_roster()

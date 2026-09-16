@@ -310,6 +310,10 @@ def build_markdown_report(
 
     lines.append(f"# Fantasy Football Decision Report — Week {current_week} ({season})")
     lines.append("")
+    for warning in report.warnings:
+        lines.append(f"> {warning}")
+    if report.warnings:
+        lines.append("")
     lines.append(f"_Generated: {now}_")
     lines.append("")
 
