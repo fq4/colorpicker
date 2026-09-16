@@ -207,6 +207,20 @@ def get_starters_count(positions: list[str]) -> dict[str, int]:
     return counts
 
 
+def _get_lineup_starter_counts(lineup: Optional[LineupRecommendation]) -> dict[str, int]:
+    """Count actual starter positions, including whoever occupies flex slots."""
+    counts: dict[str, int] = {}
+    if lineup is None:
+        return counts
+    for starter in lineup.starters:
+        for pos in str(starter.position).split(","):
+            pos = pos.strip()
+            if pos:
+                counts[pos] = counts.get(pos, 0) + 1
+                break
+    return counts
+
+
 def _week_col(current_week: int) -> str:
     return f"Week {current_week}"
 
@@ -309,6 +323,7 @@ def get_my_roster(
 def flag_bench_depth_gaps(
     my_roster: pd.DataFrame,
     positions_config: dict,
+    lineup: Optional[LineupRecommendation] = None,
 ) -> list[BenchDepthWarning]:
     """Check whether the roster has enough usable bench depth per position.
 
@@ -330,6 +345,7 @@ def flag_bench_depth_gaps(
 
     slots = parse_positions(positions_str)
     starter_counts = get_starters_count(slots)
+    actual_starter_counts = _get_lineup_starter_counts(lineup)
 
     # Determine which week column is present
     week_cols = [c for c in my_roster.columns if c.startswith("Week ") and c[5:].isdigit()]
@@ -355,7 +371,7 @@ def flag_bench_depth_gaps(
                         low_proj_names.append(str(row["Name"]))
 
         usable_count = len(pos_players)
-        starter_need = starter_counts.get(pos, 0)
+        starter_need = actual_starter_counts.get(pos, starter_counts.get(pos, 0))
         bench_depth = usable_count - starter_need
 
         if bench_depth < minimum:
@@ -643,6 +659,7 @@ def recommend_adds_drops(
         "positions": positions_str,
         "bench_depth_minimums": config.get("bench_depth_minimums", {}),
         "ir_statuses": config.get("ir_statuses", []),
+        "min_usable_projection": config.get("min_usable_projection", 1.0),
     }
 
     week_col = _week_col(current_week)
@@ -650,13 +667,12 @@ def recommend_adds_drops(
     locked_positions = _parse_locked_positions(config)
 
     # Check current bench depth
-    depth_warnings = flag_bench_depth_gaps(my_roster, positions_config)
-    depth_gap_positions = {w.position for w in depth_warnings}
-
     # Build current starter name set (used later in transparency check
     # to exclude starters from the "worst-VOR alternative" comparison pool,
     # matching the same exclusion logic used for suggested_drops)
     current_lineup = recommend_lineup(df, my_roster, positions_config, current_week)
+    depth_warnings = flag_bench_depth_gaps(my_roster, positions_config)
+    depth_gap_positions = {w.position for w in depth_warnings}
     starter_names = {s.player for s in current_lineup.starters}
 
     # Run the optimizer
@@ -991,7 +1007,7 @@ def _build_add_drop_reason(
     if rec.vor_gain is not None and rec.vor_gain != 0:
         position = (rec.add_position or "").strip().upper()
         threshold = float((min_vor_add_config or {}).get(position, min_vor_add_default))
-        if position and min_vor_add_config:
+        if position and min_vor_add_config and rec.vor_gain >= threshold:
             parts.append(
                 f"VOR gain {rec.vor_gain:+.1f} clears the streaming threshold "
                 f"({threshold:.1f}) for {position}"

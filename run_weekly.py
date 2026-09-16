@@ -163,13 +163,13 @@ def run_weekly(
 
     # 3. Depth warnings
     positions_config = build_positions_config(config)
-    depth_warnings = flag_bench_depth_gaps(my_roster, positions_config)
-    for w in depth_warnings:
-        logger.warning(f"Bench depth: {w.message}")
-
     # 4. Lineup recommendation
     lineup = recommend_lineup(df, my_roster, positions_config, current_week)
     logger.info(f"Lineup projection: {lineup.total_projection:.1f} pts (VOR {lineup.total_vor:+.1f})")
+
+    depth_warnings = flag_bench_depth_gaps(my_roster, positions_config, lineup=lineup)
+    for w in depth_warnings:
+        logger.warning(f"Bench depth: {w.message}")
 
     # 5. Add/drop recommendations
     add_drop_recs = recommend_adds_drops(df, my_roster, current_week, config)
