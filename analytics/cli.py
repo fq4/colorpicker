@@ -54,9 +54,10 @@ def _snapshot_command(args, config, kickoff_times, store):
         if parsed is None:
             raise ValueError(f"Unrecognized snapshot file: {source}")
         source_week, snapshot_time = parsed
-        if source_week != week:
+        if source_week not in {week, week - 1}:
             raise ValueError(
-                f"Snapshot is Week {source_week}; requested Week {week}."
+                f"Snapshot is Week {source_week}; requested Week {week} or its "
+                "immediately preceding scrape week."
             )
         _ensure_pre_kickoff(snapshot_time, week, kickoff_times)
     else:
@@ -67,15 +68,23 @@ def _snapshot_command(args, config, kickoff_times, store):
                 "as a pre-kickoff snapshot."
             )
         scrape_started_at = now.replace(microsecond=0)
-        _, fetched_week = get_fresh_data(
+        df, fetched_week = get_fresh_data(
             config["league_id"], config.get("is_idp", False)
         )
-        if fetched_week != week:
+        if fetched_week not in {week, week - 1}:
             raise ValueError(
-                f"Fresh scrape returned Week {fetched_week}, not requested Week {week}."
+                f"Fresh scrape returned Week {fetched_week}; requested Week {week} "
+                "requires the current week or its immediately preceding scrape week."
             )
+        if fetched_week == week - 1 and f"Week {week}" not in df.columns:
+            raise ValueError(
+                f"Fresh scrape has no Week {week} values for the requested snapshot."
+            )
+        cache_week = fetched_week
         candidates = sorted(
-            Path(args.data_dir).glob(f"league_{config['league_id']}_week_{week}_*.csv"),
+            Path(args.data_dir).glob(
+                f"league_{config['league_id']}_week_{cache_week}_*.csv"
+            ),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )

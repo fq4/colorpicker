@@ -218,8 +218,9 @@ def _show_toast(job: str, success: bool, log_path: Path) -> None:
         "$document = New-Object Windows.Data.Xml.Dom.XmlDocument; "
         "$document.LoadXml($xmlText); "
         "$toast = [Windows.UI.Notifications.ToastNotification]::new($document); "
-        "[Windows.UI.Notifications.ToastNotificationManager]"
-        ".CreateToastNotifier('Microsoft.Windows.Explorer').Show($toast)"
+        "$notifier = [Windows.UI.Notifications.ToastNotificationManager]"
+        "::CreateToastNotifier('Microsoft.Windows.Explorer'); "
+        "$notifier.Show($toast)"
     )
     subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
@@ -379,8 +380,13 @@ def main(argv: list[str] | None = None, now: datetime | None = None) -> int:
             try:
                 _show_toast(args.job, success, log_path)
             except Exception as exc:
-                LOGGER.warning("Could not display Windows toast: %s", exc)
-                print(f"Windows toast notification failed: {exc}", file=sys.stderr)
+                detail = (
+                    exc.stderr.strip()
+                    if isinstance(exc, subprocess.CalledProcessError) and exc.stderr
+                    else str(exc)
+                )
+                LOGGER.warning("Could not display Windows toast: %s", detail)
+                print(f"Windows toast notification failed: {detail}", file=sys.stderr)
 
 
 if __name__ == "__main__":
