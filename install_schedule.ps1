@@ -39,8 +39,13 @@ if ($Uninstall) {
     exit 0
 }
 
-$pythonCommand = Get-Command python.exe -CommandType Application -ErrorAction Stop
-$pythonPath = $pythonCommand.Source
+$pythonCommand = Get-Command python.exe -CommandType Application -ErrorAction Stop |
+    Select-Object -First 1
+$pythonPath = [string]$pythonCommand.Path
+if ([string]::IsNullOrWhiteSpace($pythonPath) -or
+    -not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
+    throw "Could not resolve a single Python executable from PATH."
+}
 $workingDirectory = $PSScriptRoot
 $runnerPath = Join-Path $workingDirectory "run_job.py"
 $configPath = Join-Path $workingDirectory "config.yaml"
