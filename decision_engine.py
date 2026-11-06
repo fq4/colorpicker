@@ -176,6 +176,7 @@ class RecommendationReport:
     llm_evaluation_prompt: Optional[str] = None
     matchup: Optional[MatchupReport] = None
     warnings: list[str] = field(default_factory=list)
+    analytics_info: dict = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #
@@ -326,7 +327,7 @@ def get_my_roster(
         my_roster = df[df["Owner"] == team_name].copy()
 
     # Make sure all expected columns exist
-    for col in ["Name", "Team", "Position", "Status", "VOR"]:
+    for col in ["ID", "Name", "Team", "Position", "Status", "VOR"]:
         if col not in my_roster.columns:
             my_roster[col] = None
 
@@ -338,7 +339,7 @@ def get_my_roster(
         if col.startswith("Week ") and col[5:].isdigit()
     ]
     week_columns = [week_col] + [col for col in week_columns if col != week_col]
-    cols = ["Name", "Team", "Position", "Status", *week_columns, "VOR"]
+    cols = ["ID", "Name", "Team", "Position", "Status", *week_columns, "VOR"]
     cols = list(dict.fromkeys(cols))
     result = my_roster[cols].sort_values(by=week_col, ascending=False).reset_index(drop=True)
     return result
@@ -1316,12 +1317,27 @@ def _player_standard_deviation(
     player: pd.Series,
     current_week: int,
     position_sd: dict,
+    roster: Optional[pd.DataFrame] = None,
 ) -> float:
     actuals = []
     for week in range(1, current_week):
         column = _week_col(week)
         if column in player.index:
             value = _safe_float(player.get(column))
+            team = player.get("Team")
+            team_roster = (
+                roster[roster["Team"].astype(str) == str(team)]
+                if roster is not None
+                and "Team" in roster.columns
+                and pd.notna(team)
+                else pd.DataFrame()
+            )
+            if not team_roster.empty and column in team_roster.columns:
+                team_values = pd.to_numeric(
+                    team_roster[column], errors="coerce"
+                )
+                if (team_values.isna() | team_values.eq(0)).all():
+                    continue
             if value is not None:
                 actuals.append(value)
 
@@ -1340,7 +1356,14 @@ def _lineup_standard_deviation(
     lineup: LineupRecommendation,
     current_week: int,
     position_sd: dict,
+    league_df: Optional[pd.DataFrame] = None,
+    model_sd_by_player: Optional[dict] = None,
 ) -> float:
+    bye_check_roster = league_df if league_df is not None else roster
+    if "Owner ID" in bye_check_roster.columns:
+        owner_ids = pd.to_numeric(bye_check_roster["Owner ID"], errors="coerce")
+        bye_check_roster = bye_check_roster[owner_ids.notna()]
+
     variances = []
     for starter in lineup.starters:
         player_rows = roster[roster["Name"].astype(str) == starter.player]
@@ -1355,9 +1378,18 @@ def _lineup_standard_deviation(
             )
             player_sd = fallback
         else:
-            player_sd = _player_standard_deviation(
-                player_rows.iloc[0], current_week, position_sd
-            )
+            player_id = player_rows.iloc[0].get("ID")
+            model_sd = None
+            if model_sd_by_player and pd.notna(player_id):
+                from analytics.store import normalize_player_id
+
+                model_sd = model_sd_by_player.get(normalize_player_id(player_id))
+            if model_sd is not None:
+                player_sd = float(model_sd)
+            else:
+                player_sd = _player_standard_deviation(
+                    player_rows.iloc[0], current_week, position_sd, bye_check_roster
+                )
         variances.append(player_sd ** 2)
     return math.sqrt(sum(variances))
 
@@ -1391,6 +1423,8 @@ def _optimize_matchup_lineup(
     role: str,
     z_value: float,
     swap_margin: float,
+    league_df: Optional[pd.DataFrame] = None,
+    model_sd_by_player: Optional[dict] = None,
 ) -> tuple[LineupRecommendation, list[str]]:
     """Greedily apply improving, role-aware swaps in supported lineup slots."""
     week_col = _week_col(current_week)
@@ -1410,7 +1444,10 @@ def _optimize_matchup_lineup(
     supported_slots = {"WR", "RB", "TE", "W/R"}
 
     while True:
-        own_sd = _lineup_standard_deviation(roster, lineup, current_week, position_sd)
+        own_sd = _lineup_standard_deviation(
+            roster, lineup, current_week, position_sd, league_df,
+            model_sd_by_player,
+        )
         current_projection = lineup.total_projection
         current_adjusted_projection = current_projection + {
             "underdog": 1.0,
@@ -1493,7 +1530,12 @@ def _optimize_matchup_lineup(
                 )
                 candidate_lineup.bench.append(replace(starter, slot="BN"))
                 candidate_sd = _lineup_standard_deviation(
-                    roster, candidate_lineup, current_week, position_sd
+                    roster,
+                    candidate_lineup,
+                    current_week,
+                    position_sd,
+                    league_df,
+                    model_sd_by_player,
                 )
                 direction = {"underdog": 1.0, "favorite": -1.0}.get(role, 0.0)
                 candidate_adjusted_projection = (
@@ -1531,6 +1573,7 @@ def _optimize_matchup_lineup(
 
 
 def build_matchup_analysis(
+    df: pd.DataFrame,
     my_roster: pd.DataFrame,
     baseline_lineup: LineupRecommendation,
     opponent_name: str,
@@ -1545,11 +1588,14 @@ def build_matchup_analysis(
         opponent_roster, opponent_roster, positions_config, current_week
     )
     position_sd = config.get("position_sd", {})
+    model_sd_by_player = positions_config.get("model_sd_by_player", {})
     opponent_sd = _lineup_standard_deviation(
-        opponent_roster, opponent_lineup, current_week, position_sd
+        opponent_roster, opponent_lineup, current_week, position_sd, df,
+        model_sd_by_player,
     )
     baseline_sd = _lineup_standard_deviation(
-        my_roster, baseline_lineup, current_week, position_sd
+        my_roster, baseline_lineup, current_week, position_sd, df,
+        model_sd_by_player,
     )
     probability = win_probability(
         baseline_lineup.total_projection - opponent_lineup.total_projection,
@@ -1573,9 +1619,12 @@ def build_matchup_analysis(
         role,
         float(config.get("matchup_z", 0.5)),
         float(config.get("lineup_swap_margin", 1.0)),
+        df,
+        model_sd_by_player,
     )
     selected_sd = _lineup_standard_deviation(
-        my_roster, selected_lineup, current_week, position_sd
+        my_roster, selected_lineup, current_week, position_sd, df,
+        model_sd_by_player,
     )
     final_probability = win_probability(
         selected_lineup.total_projection - opponent_lineup.total_projection,
@@ -1797,6 +1846,7 @@ def score_matchup_transactions(
     z_value = float(config.get("matchup_z", 0.5))
     swap_margin = float(config.get("lineup_swap_margin", 1.0))
     ros_weight = float(config.get("matchup_ros_weight", 0.002))
+    model_sd_by_player = positions_config.get("model_sd_by_player", {})
 
     for rec in recommendations:
         if rec.flagged:
@@ -1817,9 +1867,12 @@ def score_matchup_transactions(
             matchup.role,
             z_value,
             swap_margin,
+            df,
+            model_sd_by_player,
         )
         own_sd = _lineup_standard_deviation(
-            simulated, selected, current_week, position_sd
+            simulated, selected, current_week, position_sd, df,
+            model_sd_by_player,
         )
         move_probability = win_probability(
             selected.total_projection - matchup.opponent_projection,

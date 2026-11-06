@@ -10,6 +10,9 @@ results/
 # Reports
 reports/
 
+# Generated local analytics database, predictions, and reports
+analytics_out/
+
 # Logs
 logs/
 

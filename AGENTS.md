@@ -48,7 +48,8 @@ execution, dry-run by default, etc.).
 `bench_depth_minimums`, `ir_statuses`, `worst_vor_drop_note_threshold`, `locked_positions`,
 position-specific VOR thresholds, and matchup settings (`schedule`, `position_sd`,
 `win_probability_thresholds`, `matchup_z`, `lineup_swap_margin`, and
-`matchup_ros_weight`). `schedule` maps week numbers to opponent team IDs; team names are
+`matchup_ros_weight`). It also contains `kickoff_times` for snapshot cleanliness and
+analytics settings. `schedule` maps week numbers to opponent team IDs; team names are
 resolved from the scraped DataFrame. `--league-id`, `--team-id`, `--opponent-id`,
 `--locked-positions`, and `--hypothetical-drop` CLI flags override these per-run.
 
@@ -77,7 +78,9 @@ executor.py            STUBS ONLY — submit_add_drop(), set_lineup(). Do not wi
 report.py              Terminal + markdown report formatting, including the Action Plan
                        section (moves, resulting lineup, bench, comparison notes)
 run_weekly.py           CLI entry point — see Usage below
-tests/                 pytest suite. Run the FULL suite after any change, not just new tests.
+analytics/              Optional cached-scrape analytics, stdlib SQLite, walk-forward models
+                        and CSV-only optimizer integration
+tests/                  pytest suite. Run the FULL suite after any change, not just new tests.
 ```
 
 ## Usage (current CLI as of the CLI-override feature)
@@ -91,6 +94,9 @@ python run_weekly.py --opponent-id 6           # override the scheduled opponent
 python run_weekly.py --execute                # NOT YET WIRED — executor.py is stubs only, see below
 python run_weekly.py --hypothetical-drop "Player Name"  # what-if: simulate dropping a player without changing any data
 python run_weekly.py --locked-positions DEF,TE  # suppress add/drop suggestions at listed positions
+python -m analytics ingest  # idempotently ingest canonical cached scrapes
+python -m analytics evaluate --week 9  # evaluate clean forecasts against completed actuals
+python -m analytics predict --week 9  # write the optional CSV for the optimizer
 ```
 
 Reports save to `reports/league_{league_id}_team_{team_id}_week_{n}.md` — filenames are
@@ -166,6 +172,15 @@ unique per league/team/week so different runs never overwrite each other.
    banked or live P(win) until actual/projection provenance is available. NFL game
    correlation, including DEF/K versus opposing QB hedges, is also out of scope until
    the source data includes game opponent identifiers.
+15. **Analytics stays separate, optional, and file-based.** The analytics package may
+    learn from cached scrapes and SQLite using only the standard library, but it must not
+    scrape Yahoo itself or become a required weekly dependency. Its only optimizer
+    integration is an exported predictions CSV plus the opt-in `use_model_sd` and
+    `use_model_projections` flags, both false by default. Missing or stale predictions
+    must fall back to Yahoo/current behavior. Forecast-error SD is not player-score SD;
+    estimate it from walk-forward residuals and shrink player estimates toward
+    `position_sd`. Never use the heuristic current-week projection-change signal for
+    live scoring unless the owner explicitly approves it.
 
 **Reasoning engine gating:** The reasoning engine is opt-in via
 `reasoning_engine.enabled` in `config.yaml` or `--reasoning-engine` on a run. Keep its
@@ -195,7 +210,7 @@ Always run the full suite after any change, not just tests for what you touched:
 python -m pytest tests/ -v
 ```
 
-As of the last verified run: 171 tests passing. If your change doesn't add or update a test,
+As of the last verified run: 181 tests passing. If your change doesn't add or update a test,
 that's a signal you may have skipped verification — this project's owner checks test
 coverage claims against actual pytest output, not summaries.
 

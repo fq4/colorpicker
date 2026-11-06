@@ -29,6 +29,30 @@ matchup_z: 0.5
 lineup_swap_margin: 1.0
 matchup_ros_weight: 0.002
 
+# Snapshot/analytics flags. Keep the forecast model advisory unless opted in.
+kickoff_times:
+  1: "2026-09-09T20:20:00-04:00"
+  2: "2026-09-17T20:15:00-04:00"
+  3: "2026-09-24T20:15:00-04:00"
+  4: "2026-10-01T20:15:00-04:00"
+  5: "2026-10-08T20:15:00-04:00"
+  6: "2026-10-15T20:15:00-04:00"
+  7: "2026-10-22T20:15:00-04:00"
+  8: "2026-10-29T20:15:00-04:00"
+  9: "2026-11-05T20:15:00-05:00"
+  10: "2026-11-12T20:15:00-05:00"
+  11: "2026-11-19T20:15:00-05:00"
+  12: "2026-11-25T20:00:00-05:00"
+  13: "2026-12-03T20:15:00-05:00"
+  14: "2026-12-10T20:15:00-05:00"
+  15: "2026-12-17T20:15:00-05:00"
+  16: "2026-12-24T20:15:00-05:00"
+  17: "2026-12-31T20:15:00-05:00"
+use_model_sd: false
+use_model_projections: false
+model_projection_min_mae_improvement: 0.25
+model_projection_min_weeks: 6
+
 # thresholds the decision engine uses — tune over time
 min_vor_gain_to_recommend_add:
   QB: 2.0

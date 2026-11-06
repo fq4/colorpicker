@@ -129,6 +129,35 @@ def run_weekly(
 
     # Ensure expected columns exist
     df = ensure_data_columns(df)
+    prediction_path = (
+        Path("analytics_out")
+        / f"league_{config['league_id']}_week_{current_week}_predictions.csv"
+    )
+    if (
+        config.get("use_model_sd", False)
+        or config.get("use_model_projections", False)
+        or prediction_path.exists()
+    ):
+        from analytics.integration import load_model_predictions
+
+        df, model_sd_by_player, analytics_info = load_model_predictions(
+            df, config, current_week, logger
+        )
+    else:
+        model_sd_by_player = {}
+        analytics_info = {
+            "prediction_file": str(prediction_path),
+            "projection_source": "Yahoo",
+            "sd_source": "position SD / historical actuals",
+            "used_projections": False,
+            "used_sd": False,
+            "status": "model flags disabled; prediction file missing",
+            "player_values": [],
+        }
+        logger.info(
+            "Analytics source: Yahoo projections and current uncertainty behavior "
+            "(model flags disabled; prediction file missing)"
+        )
 
     # 1.5 Derive team_name from team_id via the scraped data
     from data_layer import get_team_name_from_id
@@ -183,11 +212,13 @@ def run_weekly(
 
     # 3. Depth warnings
     positions_config = build_positions_config(config)
+    positions_config["model_sd_by_player"] = model_sd_by_player
     # 4. Lineup recommendation
     lineup = recommend_lineup(df, my_roster, positions_config, current_week)
     matchup = None
     if opponent_roster is not None:
         lineup, matchup = build_matchup_analysis(
+            df,
             my_roster,
             lineup,
             opponent_name,
@@ -248,6 +279,7 @@ def run_weekly(
         hypothetical_drop=hypothetical_drop,
         matchup=matchup,
         warnings=([recommend_adds_drops.last_error] if getattr(recommend_adds_drops, "last_error", None) else []),
+        analytics_info=analytics_info,
     )
 
     # The evaluator is strictly optional and receives the already-fetched data

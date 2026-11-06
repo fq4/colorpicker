@@ -27,6 +27,9 @@
 9. Optionally compares your optimized lineup with an opponent's optimized-lineup proxy,
   estimates P(win) from completed-week actuals, and evaluates role-aware bench/starter
   swaps and matchup-aware transaction scores.
+10. Optionally evaluates cached Yahoo projections with a separate walk-forward analytics
+   package. Model predictions are advisory and are used by the optimizer only when the
+   false-by-default `use_model_sd` or `use_model_projections` flag is enabled.
 
 All recommendations are dry-run by default. The `executor.py` stubs exist as
 placeholders but are not wired to Yahoo's write API.
@@ -69,6 +72,18 @@ python run_weekly.py --execute
 
 # Opt in to the independent LLM assessment for one run
 python run_weekly.py --llm-evaluate
+
+# Build the local analytics database from cached CSV scrapes (safe to repeat)
+python -m analytics ingest
+
+# Save an explicitly requested pre-kickoff snapshot (scrapes only when invoked)
+python -m analytics snapshot --week 10
+
+# Evaluate cached clean projections against completed actuals
+python -m analytics evaluate --week 9
+
+# Write the prediction CSV consumed by the optional optimizer integration
+python -m analytics predict --week 9
 ```
 
 ---
@@ -132,6 +147,11 @@ python run_weekly.py --opponent-id 6
 | `win_probability_thresholds` | Favorite/underdog P(win) thresholds | Tune over time |
 | `lineup_swap_margin` | Minimum role-adjusted edge for a bench/starter swap | Tune over time |
 | `matchup_ros_weight` | Small weight on ROS transaction value alongside this week's P(win) | Tune over time |
+| `kickoff_times` | First kickoff timestamp per target week; used to label clean projections | Verify/update against the NFL schedule |
+| `use_model_sd` | Use walk-forward forecast-error SD estimates when available | `false` by default |
+| `use_model_projections` | Use blend projections only after the configured out-of-sample quality gate passes | `false` by default |
+| `model_projection_min_mae_improvement` | Minimum MAE improvement over Yahoo required for model projections | `0.25` points |
+| `model_projection_min_weeks` | Minimum number of completed test weeks required by the projection gate | `6` |
 | `llm_evaluator` | Optional second-opinion provider, model, timeout, and candidate limit | Disabled by default |
 
 ### Important notes
@@ -199,7 +219,7 @@ each other. Cached data goes to `data/`, logs to `logs/`. All are gitignored.
 python -m pytest tests/ -v
 ```
 
-As of the last verified run: **171 tests passing**.
+As of the last verified run: **181 tests passing**.
 
 ---
 
@@ -212,3 +232,7 @@ As of the last verified run: **171 tests passing**.
 - Current-week actuals cannot be distinguished from projections in ffbot's numeric `Week N`
   field, so live points-banked P(win) is not reported. NFL game correlation is not modeled
   because scraped data has no game-opponent identifiers.
+- Analytics uses only pre-kickoff projection snapshots and completed-week actuals. It is
+  optional and does not add dependencies. Generated databases, predictions, and accuracy
+  reports live under the gitignored `analytics_out/` directory. Update kickoff timestamps
+  from the published schedule when the season changes; Week 18's 2026 kickoff time is TBA.

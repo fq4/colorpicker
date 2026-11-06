@@ -169,6 +169,9 @@ def build_terminal_report(
 
     lines.append(_format_matchup_terminal(report))
     lines.append("")
+    if getattr(report, "analytics_info", None):
+        lines.append(_format_analytics_terminal(report))
+        lines.append("")
 
     # 8. Action Plan (terminal)
     if report.action_plan is not None:
@@ -434,6 +437,9 @@ def build_markdown_report(
 
     lines.append(_format_matchup_markdown(report))
     lines.append("")
+    if getattr(report, "analytics_info", None):
+        lines.append(_format_analytics_markdown(report))
+        lines.append("")
 
     # 8. Action Plan (markdown)
     if report.action_plan is not None:
@@ -525,6 +531,103 @@ def _format_matchup_markdown(report: RecommendationReport) -> str:
     lines.append("")
     return "\n".join(lines)
 
+def _analytics_roster_values(report: RecommendationReport):
+    info = getattr(report, "analytics_info", {}) or {}
+    values = info.get("player_values", [])
+    if report.my_roster is None or "ID" not in report.my_roster.columns:
+        return []
+    roster_ids = set()
+    for value in report.my_roster["ID"]:
+        if value is None:
+            continue
+        text = str(value).strip()
+        try:
+            number = float(text)
+            if number.is_integer():
+                text = str(int(number))
+        except ValueError:
+            pass
+        roster_ids.add(text)
+    selected = [
+        value for value in values if str(value.get("player_id", "")) in roster_ids
+    ]
+    return sorted(
+        selected,
+        key=lambda value: abs(value["model_proj"] - value["yahoo_proj"]),
+        reverse=True,
+    )[:3]
+
+
+def _format_analytics_terminal(report: RecommendationReport) -> str:
+    info = getattr(report, "analytics_info", {})
+    projection_label = (
+        "model blend (opt-in)" if info.get("used_projections") else "Yahoo"
+    )
+    sd_label = (
+        info.get("sd_source", "existing behavior")
+        if info.get("used_sd")
+        else "existing behavior"
+    )
+    lines = [
+        "--- Projection Analytics ---",
+        f"  Active projection source: {projection_label}",
+        f"  Uncertainty source: {sd_label}",
+        f"  Status: {info.get('status', 'no analytics status')}",
+        f"  Prediction file: {info.get('prediction_file', 'n/a')}",
+    ]
+    if info.get("yahoo_oos_mae") is not None:
+        lines.append(
+            f"  Prior OOS MAE: Yahoo {info['yahoo_oos_mae']:.3f}, "
+            f"model {info['model_oos_mae']:.3f} "
+            f"({info.get('projection_weeks', 0)} weeks; "
+            f"gate {'passed' if info.get('quality_gate_passed') else 'not passed'})"
+        )
+    player_values = _analytics_roster_values(report)
+    if player_values:
+        lines.append("  Roster values (Yahoo -> model):")
+        lines.extend(
+            f"    - {item['player_name']} ({item['position']}): "
+            f"{item['yahoo_proj']:.1f} -> {item['model_proj']:.1f}"
+            for item in player_values
+        )
+    return "\n".join(lines)
+
+
+def _format_analytics_markdown(report: RecommendationReport) -> str:
+    info = getattr(report, "analytics_info", {})
+    projection_label = (
+        "Model blend (opt-in)" if info.get("used_projections") else "Yahoo"
+    )
+    sd_label = (
+        info.get("sd_source", "existing behavior")
+        if info.get("used_sd")
+        else "existing behavior"
+    )
+    lines = [
+        "## Projection Analytics",
+        "",
+        f"- **Active projection source:** {projection_label}",
+        f"- **Uncertainty source:** {sd_label}",
+        f"- **Status:** {info.get('status', 'no analytics status')}",
+        f"- **Prediction file:** `{info.get('prediction_file', 'n/a')}`",
+    ]
+    if info.get("yahoo_oos_mae") is not None:
+        lines.append(
+            f"- **Prior OOS MAE:** Yahoo {info['yahoo_oos_mae']:.3f}, "
+            f"model {info['model_oos_mae']:.3f} across "
+            f"{info.get('projection_weeks', 0)} weeks; projection quality gate "
+            f"{'passed' if info.get('quality_gate_passed') else 'not passed'}."
+        )
+    player_values = _analytics_roster_values(report)
+    if player_values:
+        lines.extend(["", "**Roster values (Yahoo → model):**", ""])
+        lines.extend(
+            f"- {item['player_name']} ({item['position']}): "
+            f"{item['yahoo_proj']:.1f} → {item['model_proj']:.1f}"
+            for item in player_values
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 def _format_llm_assessment_terminal(report: RecommendationReport) -> str:
     lines = ["--- Independent LLM Assessment (second opinion; no actions executed) ---"]

@@ -12,6 +12,7 @@ from decision_engine import (
     get_my_roster,
     get_opponent_roster,
     matchup_transaction_score,
+    _player_standard_deviation,
     recommend_lineup,
     win_probability,
 )
@@ -23,6 +24,57 @@ def test_win_probability_uses_normal_cdf():
     assert win_probability(-1.0, 0.0) == 0.0
     assert win_probability(0.0, 1.0) == 0.5
     assert win_probability(1.0, 1.0) == pytest.approx(0.8413447)
+
+
+def test_player_sd_excludes_team_bye_zero_but_keeps_other_zero():
+    roster = pd.DataFrame(
+        [
+            {
+                "Name": "Runner",
+                "Team": "BUF",
+                "Position": "RB",
+                "Week 1": 12,
+                "Week 2": 14,
+                "Week 3": 0,
+                "Week 4": 13,
+                "Week 5": 0,
+            },
+            {
+                "Name": "Teammate",
+                "Team": "BUF",
+                "Position": "WR",
+                "Week 1": 10,
+                "Week 2": 12,
+                "Week 3": 0,
+                "Week 4": 11,
+                "Week 5": 10,
+            },
+            {
+                "Name": "Other Team Player",
+                "Team": "MIA",
+                "Position": "WR",
+                "Week 1": 8,
+                "Week 2": 10,
+                "Week 3": 12,
+                "Week 4": 10,
+                "Week 5": 10,
+            },
+        ]
+    )
+    player = roster.iloc[0]
+
+    without_dnp = _player_standard_deviation(
+        player.drop(labels=["Week 5"]),
+        5,
+        {"RB": 9.0},
+        roster.drop(columns=["Week 5"]),
+    )
+    with_dnp = _player_standard_deviation(
+        player, 6, {"RB": 9.0}, roster
+    )
+
+    assert without_dnp == pytest.approx(1.0)
+    assert with_dnp == pytest.approx(pd.Series([12, 14, 13, 0]).std(ddof=1))
 
 
 def test_opponent_roster_is_resolved_and_validated(mock_df):
@@ -55,6 +107,11 @@ def test_underdog_lineup_uses_higher_ceiling_bench_player():
             "Week 1": 0, "Week 2": 30, "Week 3": 0, "Week 4": 17,
         },
         {
+            "ID": 6, "Name": "C Teammate", "Team": "C", "Position": "RB",
+            "Owner": "Opponent", "Owner ID": 8, "Status": "", "VOR": 1,
+            "Week 1": 10, "Week 2": 10, "Week 3": 10, "Week 4": 1,
+        },
+        {
             "ID": 4, "Name": "Opponent A", "Team": "D", "Position": "RB",
             "Owner": "Opponent", "Owner ID": 8, "Status": "", "VOR": 1,
             "Week 1": 30, "Week 2": 30, "Week 3": 30, "Week 4": 30,
@@ -76,6 +133,7 @@ def test_underdog_lineup_uses_higher_ceiling_bench_player():
     baseline = recommend_lineup(df, own_roster, positions, 4)
 
     selected, matchup = build_matchup_analysis(
+        df,
         own_roster,
         baseline,
         "Opponent",
