@@ -5,7 +5,7 @@
 > read-only scraper, runs an optimizer, and produces add/drop recommendations
 > with an actionable weekly plan.
 
-**Last updated:** 2026-09-07
+**Last updated:** 2026-11-05
 
 ---
 
@@ -24,6 +24,9 @@
   by default and cannot execute transactions or change lineups.
 8. Evaluates complete add/drop transactions against HOLD with legality,
   starter-impact, current-week, ROS, VOR, scarcity, and opportunity-cost metrics.
+9. Optionally compares your optimized lineup with an opponent's optimized-lineup proxy,
+  estimates P(win) from completed-week actuals, and evaluates role-aware bench/starter
+  swaps and matchup-aware transaction scores.
 
 All recommendations are dry-run by default. The `executor.py` stubs exist as
 placeholders but are not wired to Yahoo's write API.
@@ -58,6 +61,9 @@ python run_weekly.py --force-refresh
 # Override league/team for a single run
 python run_weekly.py --league-id 123456 --team-id 5
 
+# Override this week's opponent by Yahoo team ID
+python run_weekly.py --opponent-id 6
+
 # Execute recommendations (not yet wired to Yahoo API)
 python run_weekly.py --execute
 
@@ -79,6 +85,7 @@ python run_weekly.py --llm-evaluate
 | `--max-cache-age H` | float | `12.0` | Max cache age in hours before re-scraping |
 | `--league-id N` | int | from config.yaml | Override `league_id` for this run |
 | `--team-id N` | int | from config.yaml | Override `team_id` for this run |
+| `--opponent-id N` | int | schedule for this week | Override this week's opponent team ID |
 | `--waiver-priority N` | int | from config.yaml | Override `waiver_priority` (display-only) |
 | `--scoring-type TYPE` | str | from config.yaml | Override `scoring_type`: `half-ppr`, `ppr`, or `standard` (display-only) |
 | `--positions STR` | str | from config.yaml | Override `positions` slot string (functional — affects roster limit and lineup optimization) |
@@ -99,6 +106,9 @@ python run_weekly.py --positions "QB, WR, RB, TE, K, DEF, BN, BN, IR"
 
 # Combine multiple overrides
 python run_weekly.py --league-id 999 --team-id 3 --scoring-type standard --force-refresh
+
+# Analyze a matchup without editing config.yaml
+python run_weekly.py --opponent-id 6
 ```
 
 ---
@@ -117,10 +127,22 @@ python run_weekly.py --league-id 999 --team-id 3 --scoring-type standard --force
 | `ir_statuses` | Injury statuses that disqualify a player from bench depth | Standard IR statuses |
 | `min_usable_projection` | Floor projection for a player to count as usable depth | Default `1.0` |
 | `min_vor_gain_to_recommend_add` | Per-position VOR threshold for add recommendations | Tune over time |
+| `schedule` | Optional week-to-opponent-team-ID map | League schedule |
+| `position_sd` | Fallback player scoring SD by position when fewer than 3 actuals exist | Tune from league history |
+| `win_probability_thresholds` | Favorite/underdog P(win) thresholds | Tune over time |
+| `lineup_swap_margin` | Minimum role-adjusted edge for a bench/starter swap | Tune over time |
+| `matchup_ros_weight` | Small weight on ROS transaction value alongside this week's P(win) | Tune over time |
 | `llm_evaluator` | Optional second-opinion provider, model, timeout, and candidate limit | Disabled by default |
 
 ### Important notes
 
+- Set `schedule` to a week-to-opponent-team-ID mapping (for example, `{9: 6}`),
+  or pass `--opponent-id` for a one-run override. IDs are validated against the
+  already-loaded league data; opponent names are resolved at runtime.
+- The opponent lineup is an optimal-lineup proxy, not their confirmed submitted lineup.
+  Win probability uses a normal approximation with independent player outcomes. Current
+  live scores are not reported because ffbot does not preserve whether a numeric current
+  `Week N` value was an actual or a projection.
 - **`team_name` is no longer maintained in `config.yaml`**. It is derived at runtime
   from `team_id` via the scraped data. Do not add it back — that previously caused
   a silent desync bug where the roster shown and the optimizer analyzed different teams.
@@ -177,7 +199,7 @@ each other. Cached data goes to `data/`, logs to `logs/`. All are gitignored.
 python -m pytest tests/ -v
 ```
 
-As of the last run: **121 tests passing**.
+As of the last verified run: **171 tests passing**.
 
 ---
 
@@ -187,3 +209,6 @@ As of the last run: **121 tests passing**.
 - Yahoo's official Fantasy Sports API supports write operations but requires OAuth 2.0,
   XML payloads, and has operational risks (waiver timing, partial failures).
 - The `executor.py` stubs exist as a seam for future implementation but are not wired.
+- Current-week actuals cannot be distinguished from projections in ffbot's numeric `Week N`
+  field, so live points-banked P(win) is not reported. NFL game correlation is not modeled
+  because scraped data has no game-opponent identifiers.

@@ -45,9 +45,12 @@ execution, dry-run by default, etc.).
 ## Config
 
 `config.yaml` holds defaults: `league_id`, `team_id`, `positions`, scoring settings,
-`bench_depth_minimums`, `ir_statuses`, `worst_vor_drop_note_threshold`, `locked_positions`, VOR
-thresholds. `--league-id`, `--team-id`, `--locked-positions`, and `--hypothetical-drop` CLI
-flags override these per-run without editing the file.
+`bench_depth_minimums`, `ir_statuses`, `worst_vor_drop_note_threshold`, `locked_positions`,
+position-specific VOR thresholds, and matchup settings (`schedule`, `position_sd`,
+`win_probability_thresholds`, `matchup_z`, `lineup_swap_margin`, and
+`matchup_ros_weight`). `schedule` maps week numbers to opponent team IDs; team names are
+resolved from the scraped DataFrame. `--league-id`, `--team-id`, `--opponent-id`,
+`--locked-positions`, and `--hypothetical-drop` CLI flags override these per-run.
 
 **Important:** `team_name` is NOT a maintained config value — it is derived at runtime
 from `team_id` via `get_team_name_from_id()` in `decision_engine.py`, using the `Owner`
@@ -84,6 +87,7 @@ python run_weekly.py                          # dry-run, uses config.yaml defaul
 python run_weekly.py --force-refresh          # bypass cache, re-scrape (~7 min)
 python run_weekly.py --week 3                 # override auto-detected week
 python run_weekly.py --league-id X --team-id Y  # analyze a different league/team for this run only
+python run_weekly.py --opponent-id 6           # override the scheduled opponent team ID
 python run_weekly.py --execute                # NOT YET WIRED — executor.py is stubs only, see below
 python run_weekly.py --hypothetical-drop "Player Name"  # what-if: simulate dropping a player without changing any data
 python run_weekly.py --locked-positions DEF,TE  # suppress add/drop suggestions at listed positions
@@ -151,12 +155,21 @@ unique per league/team/week so different runs never overwrite each other.
    impact, scarcity, opportunity cost, drop resistance, alternatives, confidence, and a
    structured reasoning ledger. Do not treat positive incoming-player VOR as sufficient
    evidence of a good transaction, and do not let LLM output override these calculations.
+13. **Matchup probability is in scope and advisory.** The opponent roster must come from
+   the existing scraped DataFrame and be selected by numeric team ID, never by team
+   name. Opponent optimal lineups are only proxies for actual submitted lineups. Player
+   outcome independence is assumed; do not model shared players across distinct rosters.
+   Matchup transactions use this-week P(win) change plus a small configurable ROS weight.
+14. **Respect projection-data limits.** Completed Week 1..N-1 values in ffbot's `Week N`
+   columns are actuals, but ffbot removes the `*` marker and returns current-week
+   projections and actuals as indistinguishable numbers. Do not estimate live points
+   banked or live P(win) until actual/projection provenance is available. NFL game
+   correlation, including DEF/K versus opposing QB hedges, is also out of scope until
+   the source data includes game opponent identifiers.
 
-**Opt-in gating for the reasoning engine:** `reasoning_engine` is disabled by default via
-`config.yaml` and is not part of the core recommendation pipeline. It is only activated when
-`reasoning_engine.enabled` is set to `true` in config or `--reasoning-engine` is passed on a run.
-This feature was originally added without explicit request and is intentionally gated so it does
-not silently change the default behavior or surface extra output on normal runs.
+**Reasoning engine gating:** The reasoning engine is opt-in via
+`reasoning_engine.enabled` in `config.yaml` or `--reasoning-engine` on a run. Keep its
+behavior separate from matchup probability calculations.
 
 ## Automation / executor.py — investigated, deliberately NOT built
 
@@ -182,7 +195,7 @@ Always run the full suite after any change, not just tests for what you touched:
 python -m pytest tests/ -v
 ```
 
-As of the last commit: 113 tests passing. If your change doesn't add or update a test,
+As of the last verified run: 171 tests passing. If your change doesn't add or update a test,
 that's a signal you may have skipped verification — this project's owner checks test
 coverage claims against actual pytest output, not summaries.
 

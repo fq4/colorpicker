@@ -34,9 +34,12 @@ from data_layer import (
 )
 from decision_engine import (
     get_my_roster,
+    get_opponent_roster,
     flag_bench_depth_gaps,
     recommend_adds_drops,
     recommend_lineup,
+    build_matchup_analysis,
+    score_matchup_transactions,
     build_action_plan,
     check_upcoming_byes,
     RecommendationReport,
@@ -80,8 +83,6 @@ def build_positions_config(config: dict) -> dict:
         "ir_statuses": config.get("ir_statuses", []),
         "min_usable_projection": config.get("min_usable_projection", 1.0),
         "locked_positions": config.get("locked_positions", []),
-        "must_win": config.get("must_win", False),
-        "min_bench_move_ros_delta": config.get("min_bench_move_ros_delta", 8.0),
     }
 
 
@@ -133,6 +134,18 @@ def run_weekly(
     from data_layer import get_team_name_from_id
     team_name = get_team_name_from_id(df, config["team_id"])
     config["team_name"] = team_name  # inject so all downstream readers stay in sync
+    schedule = config.get("schedule", {})
+    opponent_id = config.get("opponent_id")
+    if opponent_id is None and isinstance(schedule, dict):
+        opponent_id = schedule.get(str(current_week), schedule.get(current_week))
+    opponent_name = None
+    opponent_roster = None
+    if opponent_id is not None:
+        opponent_name, opponent_roster = get_opponent_roster(
+            df, config["team_id"], int(opponent_id), current_week
+        )
+        config["opponent_id"] = int(opponent_id)
+        config["opponent_name"] = opponent_name
 
     # Print resolved identity banner
     print()
@@ -172,6 +185,22 @@ def run_weekly(
     positions_config = build_positions_config(config)
     # 4. Lineup recommendation
     lineup = recommend_lineup(df, my_roster, positions_config, current_week)
+    matchup = None
+    if opponent_roster is not None:
+        lineup, matchup = build_matchup_analysis(
+            my_roster,
+            lineup,
+            opponent_name,
+            int(opponent_id),
+            opponent_roster,
+            positions_config,
+            current_week,
+            config,
+        )
+        logger.info(
+            f"Matchup vs. {opponent_name}: {matchup.win_probability:.1%} win probability "
+            f"({matchup.role}); lineup mode: {matchup.lineup_mode}"
+        )
     logger.info(f"Lineup projection: {lineup.total_projection:.1f} pts (VOR {lineup.total_vor:+.1f})")
 
     depth_warnings = flag_bench_depth_gaps(my_roster, positions_config, lineup=lineup)
@@ -180,6 +209,16 @@ def run_weekly(
 
     # 5. Add/drop recommendations
     add_drop_recs = recommend_adds_drops(df, my_roster, current_week, config)
+    if matchup is not None:
+        add_drop_recs = score_matchup_transactions(
+            df,
+            my_roster,
+            add_drop_recs,
+            positions_config,
+            current_week,
+            matchup,
+            config,
+        )
     # Separate negative-VOR recommendations
     low_value = [r for r in add_drop_recs if r.vor_gain is not None and r.vor_gain < 0]
     add_drop_recs = [r for r in add_drop_recs if r.vor_gain is None or r.vor_gain >= 0]
@@ -207,6 +246,7 @@ def run_weekly(
         action_plan=action_plan,
         week=current_week,
         hypothetical_drop=hypothetical_drop,
+        matchup=matchup,
         warnings=([recommend_adds_drops.last_error] if getattr(recommend_adds_drops, "last_error", None) else []),
     )
 
@@ -285,6 +325,11 @@ def main():
         help="Override team_id from config.yaml for this run"
     )
     parser.add_argument(
+        "--opponent-id", type=int, default=None,
+        dest="opponent_id",
+        help="Override the scheduled opponent team ID for this run only"
+    )
+    parser.add_argument(
         "--waiver-priority", type=int, default=None,
         dest="waiver_priority",
         help="Override waiver_priority from config.yaml for this run (display-only)"
@@ -338,6 +383,8 @@ def main():
         config["league_id"] = args.league_id
     if args.team_id is not None:
         config["team_id"] = args.team_id
+    if args.opponent_id is not None:
+        config["opponent_id"] = args.opponent_id
     if args.waiver_priority is not None:
         config["waiver_priority"] = args.waiver_priority
     if args.scoring_type is not None:

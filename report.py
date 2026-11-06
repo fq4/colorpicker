@@ -167,7 +167,10 @@ def build_terminal_report(
             lines.append("⚠️ LLM assessment unavailable — response was malformed")
         lines.append("")
 
-    # 7. Action Plan (terminal)
+    lines.append(_format_matchup_terminal(report))
+    lines.append("")
+
+    # 8. Action Plan (terminal)
     if report.action_plan is not None:
         lines.append(_format_action_plan_terminal(report.action_plan, current_week))
         lines.append("")
@@ -250,6 +253,12 @@ def _format_add_drop_rec_terminal(i: int, rec: AddDropRecommendation, week: int)
 
     if rec.vor_gain is not None:
         lines.append(f"     VOR gain: {_format_float(rec.vor_gain, signed=True)}")
+    if rec.matchup_transaction_score is not None:
+        lines.append(
+            "     Matchup score: "
+            f"{rec.matchup_transaction_score:+.4f} "
+            f"(P(win) change {(rec.matchup_win_probability_delta or 0.0):+.1%})"
+        )
 
     lines.append(f"     Reason: {rec.reason}")
 
@@ -423,7 +432,10 @@ def build_markdown_report(
             lines.append("⚠️ LLM assessment unavailable — response was malformed")
         lines.append("")
 
-    # 7. Action Plan (markdown)
+    lines.append(_format_matchup_markdown(report))
+    lines.append("")
+
+    # 8. Action Plan (markdown)
     if report.action_plan is not None:
         lines.append(_md_action_plan(report.action_plan, current_week))
         lines.append("")
@@ -437,6 +449,80 @@ def build_markdown_report(
     lines.append(f"This report is saved as `reports/{filename}` for season-long accuracy tracking.")
     lines.append("")
 
+    return "\n".join(lines)
+
+
+def _format_matchup_terminal(report: RecommendationReport) -> str:
+    matchup = getattr(report, "matchup", None)
+    lines = ["--- Matchup ---"]
+    if matchup is None:
+        lines.append("  No opponent configured; set schedule[week] or use --opponent-id.")
+        return "\n".join(lines)
+
+    own_projection = report.lineup.total_projection if report.lineup else 0.0
+    lines.extend(
+        [
+            f"  Opponent: {matchup.opponent_name} (team ID {matchup.opponent_team_id})",
+            f"  Your projected total: {own_projection:.1f} (SD {matchup.team_sd:.1f})",
+            f"  Opponent optimal-lineup proxy: {matchup.opponent_projection:.1f} "
+            f"(SD {matchup.opponent_sd:.1f})",
+            f"  P(win): {matchup.win_probability:.1%} — {matchup.role}; "
+            f"lineup mode: {matchup.lineup_mode}",
+            "  The opponent lineup is an optimal-lineup proxy, not their confirmed real lineup.",
+            "  Swing decisions:",
+        ]
+    )
+    lines.extend(f"    - {decision}" for decision in matchup.swing_decisions)
+    if matchup.opponent_injury_flags:
+        lines.append("  Opponent injured/Out starters:")
+        lines.extend(f"    - {flag}" for flag in matchup.opponent_injury_flags)
+    lines.extend(f"  Note: {followup}" for followup in matchup.followups)
+    if matchup.live_scoring_note:
+        lines.append(f"  Live scoring: {matchup.live_scoring_note}")
+    return "\n".join(lines)
+
+
+def _format_matchup_markdown(report: RecommendationReport) -> str:
+    matchup = getattr(report, "matchup", None)
+    lines = ["## Matchup", ""]
+    if matchup is None:
+        lines.extend(
+            [
+                "No opponent configured; set `schedule[week]` or use `--opponent-id`.",
+                "",
+            ]
+        )
+        return "\n".join(lines)
+
+    own_projection = report.lineup.total_projection if report.lineup else 0.0
+    lines.extend(
+        [
+            f"- **Opponent:** {matchup.opponent_name} (team ID {matchup.opponent_team_id})",
+            f"- **Your projected total:** {own_projection:.1f} pts (SD {matchup.team_sd:.1f})",
+            f"- **Opponent optimal-lineup proxy:** {matchup.opponent_projection:.1f} pts "
+            f"(SD {matchup.opponent_sd:.1f})",
+            f"- **P(win):** {matchup.win_probability:.1%} — **{matchup.role}**",
+            f"- **Lineup mode:** {matchup.lineup_mode}",
+            "- The opponent lineup is an optimal-lineup proxy, not their confirmed real lineup.",
+            "",
+            "**Swing decisions:**",
+            "",
+        ]
+    )
+    lines.extend(f"- {decision}" for decision in matchup.swing_decisions)
+    if matchup.opponent_injury_flags:
+        lines.extend(
+            [
+                "",
+                "**Opponent injured/Out starters:**",
+                "",
+            ]
+        )
+        lines.extend(f"- {flag}" for flag in matchup.opponent_injury_flags)
+    lines.extend(["", *[f"- Note: {followup}" for followup in matchup.followups]])
+    if matchup.live_scoring_note:
+        lines.append(f"- Live scoring: {matchup.live_scoring_note}")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -557,6 +643,12 @@ def _md_add_drop_rec(i: int, rec: AddDropRecommendation, week: int) -> str:
 
     if rec.vor_gain is not None:
         lines.append(f"- **VOR gain:** {_md_float(rec.vor_gain, signed=True)}")
+    if rec.matchup_transaction_score is not None:
+        lines.append(
+            "- **Matchup score:** "
+            f"{rec.matchup_transaction_score:+.4f} "
+            f"(P(win) change {(rec.matchup_win_probability_delta or 0.0):+.1%})"
+        )
 
     lines.append("")
     lines.append(f"**Reason:** {rec.reason}")

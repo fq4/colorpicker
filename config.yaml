@@ -10,11 +10,24 @@ waiver_type: "continual_rolling"   # confirmed from league settings — not FAAB
 waiver_priority: 10   # update weekly as it changes
 season: 2026
 
-# Week 3 is a must-win after starting 0-2. In this mode, the action plan
-# refuses moves that lower this week's optimized lineup, and ignores tiny
-# bench-only ROS upgrades.
-must_win: true
-min_bench_move_ros_delta: 8.0
+# Optional weekly matchup schedule: week number -> opponent Yahoo team ID.
+schedule: {}
+
+# Player scoring SD defaults, used until a player has 3 completed games.
+position_sd:
+  default: 8.0
+  QB: 6.0
+  RB: 7.0
+  WR: 8.0
+  TE: 6.0
+  K: 4.0
+  DEF: 7.0
+win_probability_thresholds:
+  favorite: 0.60
+  underdog: 0.40
+matchup_z: 0.5
+lineup_swap_margin: 1.0
+matchup_ros_weight: 0.002
 
 # thresholds the decision engine uses — tune over time
 min_vor_gain_to_recommend_add:
@@ -65,4 +78,3 @@ ir_statuses:
   - "COVID"
   - "PUP"
   - "PUP-R"
-

@@ -7,6 +7,7 @@ the same data without parsing strings.
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field, replace
 from typing import Optional
@@ -56,6 +57,8 @@ class AddDropRecommendation:
     drop_resistance: Optional[float] = None
     reasoning_ledger: Optional[dict] = None
     reasoning_detail: Optional[str] = None
+    matchup_win_probability_delta: Optional[float] = None
+    matchup_transaction_score: Optional[float] = None
     contradictions: list[str] = field(default_factory=list)
 
 
@@ -126,6 +129,25 @@ class LineupRecommendation:
 
 
 @dataclass
+class MatchupReport:
+    """Opponent-aware weekly projection and lineup analysis."""
+
+    opponent_team_id: int
+    opponent_name: str
+    opponent_lineup: LineupRecommendation
+    opponent_projection: float
+    opponent_sd: float
+    team_sd: float
+    win_probability: float
+    role: str
+    lineup_mode: str
+    swing_decisions: list[str] = field(default_factory=list)
+    opponent_injury_flags: list[str] = field(default_factory=list)
+    followups: list[str] = field(default_factory=list)
+    live_scoring_note: Optional[str] = None
+
+
+@dataclass
 class ActionPlan:
     """Action plan with moves to make, resulting lineup, and remaining warnings."""
 
@@ -152,6 +174,7 @@ class RecommendationReport:
     llm_evaluation: Optional[dict] = None
     llm_evaluation_error: Optional[str] = None
     llm_evaluation_prompt: Optional[str] = None
+    matchup: Optional[MatchupReport] = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -319,6 +342,32 @@ def get_my_roster(
     cols = list(dict.fromkeys(cols))
     result = my_roster[cols].sort_values(by=week_col, ascending=False).reset_index(drop=True)
     return result
+
+
+def get_opponent_roster(
+    df: pd.DataFrame,
+    team_id: int,
+    opponent_id: int,
+    current_week: int,
+) -> tuple[str, pd.DataFrame]:
+    """Validate an opponent ID and return its roster from the already-scraped data."""
+    if int(opponent_id) == int(team_id):
+        raise ValueError("opponent_id must differ from team_id.")
+
+    from data_layer import get_team_name_from_id
+
+    owner_data = df.copy()
+    if "Owner ID" in owner_data.columns:
+        owner_data["Owner ID"] = pd.to_numeric(
+            owner_data["Owner ID"], errors="coerce"
+        )
+    opponent_name = get_team_name_from_id(owner_data, int(opponent_id))
+    roster = get_my_roster(df, opponent_name, current_week, team_id=int(opponent_id))
+    if roster.empty:
+        raise ValueError(
+            f"opponent_id={opponent_id} has no players in the scraped data."
+        )
+    return opponent_name, roster
 
 
 # --------------------------------------------------------------------------- #
@@ -1251,6 +1300,326 @@ def recommend_lineup(
     return result
 
 
+def win_probability(mean_difference: float, standard_deviation: float) -> float:
+    """Return P(X > 0) for a normally distributed point differential."""
+    if standard_deviation <= 0:
+        if mean_difference > 0:
+            return 1.0
+        if mean_difference < 0:
+            return 0.0
+        return 0.5
+    z_score = mean_difference / standard_deviation
+    return 0.5 * (1.0 + math.erf(z_score / math.sqrt(2.0)))
+
+
+def _player_standard_deviation(
+    player: pd.Series,
+    current_week: int,
+    position_sd: dict,
+) -> float:
+    actuals = []
+    for week in range(1, current_week):
+        column = _week_col(week)
+        if column in player.index:
+            value = _safe_float(player.get(column))
+            if value is not None:
+                actuals.append(value)
+
+    if len(actuals) >= 3:
+        return float(pd.Series(actuals, dtype=float).std(ddof=1))
+
+    positions = [part.strip() for part in str(player.get("Position", "")).split(",")]
+    for position in positions:
+        if position in position_sd:
+            return float(position_sd[position])
+    return float(position_sd.get("default", 8.0))
+
+
+def _lineup_standard_deviation(
+    roster: pd.DataFrame,
+    lineup: LineupRecommendation,
+    current_week: int,
+    position_sd: dict,
+) -> float:
+    variances = []
+    for starter in lineup.starters:
+        player_rows = roster[roster["Name"].astype(str) == starter.player]
+        if player_rows.empty:
+            fallback = next(
+                (
+                    float(position_sd[position])
+                    for position in str(starter.position).split(",")
+                    if position in position_sd
+                ),
+                float(position_sd.get("default", 8.0)),
+            )
+            player_sd = fallback
+        else:
+            player_sd = _player_standard_deviation(
+                player_rows.iloc[0], current_week, position_sd
+            )
+        variances.append(player_sd ** 2)
+    return math.sqrt(sum(variances))
+
+
+def _matchup_role(probability: float, thresholds: dict) -> str:
+    favorite_threshold = float(thresholds.get("favorite", 0.60))
+    underdog_threshold = float(thresholds.get("underdog", 0.40))
+    if not 0.0 <= underdog_threshold < favorite_threshold <= 1.0:
+        raise ValueError(
+            "win_probability_thresholds must satisfy "
+            "0 <= underdog < favorite <= 1."
+        )
+    if probability >= favorite_threshold:
+        return "favorite"
+    if probability <= underdog_threshold:
+        return "underdog"
+    return "toss-up"
+
+
+def _eligible_positions(position: str) -> set[str]:
+    return {part.strip() for part in str(position).split(",") if part.strip()}
+
+
+def _optimize_matchup_lineup(
+    roster: pd.DataFrame,
+    baseline: LineupRecommendation,
+    current_week: int,
+    position_sd: dict,
+    opponent_projection: float,
+    opponent_sd: float,
+    role: str,
+    z_value: float,
+    swap_margin: float,
+) -> tuple[LineupRecommendation, list[str]]:
+    """Greedily apply improving, role-aware swaps in supported lineup slots."""
+    week_col = _week_col(current_week)
+    player_rows = {
+        str(row["Name"]): row
+        for _, row in roster.iterrows()
+    }
+    lineup = replace(
+        baseline,
+        starters=list(baseline.starters),
+        bench=list(baseline.bench),
+        flagged_starters=list(baseline.flagged_starters),
+        warnings=list(baseline.warnings),
+    )
+    decisions: list[str] = []
+    visited_starter_sets = {tuple(sorted(slot.player for slot in lineup.starters))}
+    supported_slots = {"WR", "RB", "TE", "W/R"}
+
+    while True:
+        own_sd = _lineup_standard_deviation(roster, lineup, current_week, position_sd)
+        current_projection = lineup.total_projection
+        current_adjusted_projection = current_projection + {
+            "underdog": 1.0,
+            "favorite": -1.0,
+        }.get(role, 0.0) * z_value * own_sd
+        current_probability = win_probability(
+            current_projection - opponent_projection,
+            math.sqrt(own_sd ** 2 + opponent_sd ** 2),
+        )
+        best_candidate = None
+
+        for starter_index, starter in enumerate(lineup.starters):
+            slot_type = starter.slot.rstrip("0123456789")
+            if slot_type not in supported_slots:
+                continue
+            allowed_positions = SLOT_POSITION_MAP.get(slot_type, set())
+            outgoing = player_rows.get(starter.player)
+            if outgoing is None:
+                continue
+
+            for alternative in lineup.bench:
+                if alternative.slot == "IR" or _is_ir(
+                    alternative.status,
+                    {"IR", "IR-R", "NFI", "NFI-R", "NFI-A", "COVID", "PUP", "PUP-R"},
+                ):
+                    continue
+                if (_safe_status(alternative.status) or "").strip().upper() in {
+                            "O", "OUT", "IR", "IR-R", "NFI", "NFI-R", "PUP", "PUP-R",
+                }:
+                    continue
+                if not (_eligible_positions(alternative.position) & allowed_positions):
+                    continue
+                incoming = player_rows.get(alternative.player)
+                if incoming is None:
+                    continue
+
+                candidate_starters = list(lineup.starters)
+                candidate_starters[starter_index] = replace(
+                    starter,
+                    player=alternative.player,
+                    team=str(incoming.get("Team", "")),
+                    position=str(incoming.get("Position", "")),
+                    projection=_safe_float(incoming.get(week_col)) or 0.0,
+                    vor=_safe_float(incoming.get("VOR")) or 0.0,
+                    status=_safe_status(incoming.get("Status")) or "",
+                    flagged=(
+                        (_safe_status(incoming.get("Status")) or "").strip().upper()
+                        in {"Q", "Q-", "D"}
+                    ),
+                    bench_alternative=starter.player,
+                    bench_alt_projection=starter.projection,
+                    bench_alt_status=starter.status,
+                )
+                starter_names = {slot.player for slot in candidate_starters}
+                if len(starter_names) != len(candidate_starters):
+                    continue
+                state = tuple(sorted(starter_names))
+                if state in visited_starter_sets:
+                    continue
+                candidate_projection = sum(slot.projection for slot in candidate_starters)
+                candidate_lineup = replace(
+                    lineup,
+                    starters=candidate_starters,
+                    bench=[
+                        replace(
+                            old,
+                            slot="BN",
+                            bench_alternative=None,
+                            bench_alt_projection=None,
+                        )
+                        for old in lineup.bench
+                        if old.player != alternative.player
+                    ],
+                    total_projection=candidate_projection,
+                    total_vor=sum(slot.vor for slot in candidate_starters),
+                    flagged_starters=[
+                        slot for slot in candidate_starters if slot.flagged
+                    ],
+                    warnings=[],
+                )
+                candidate_lineup.bench.append(replace(starter, slot="BN"))
+                candidate_sd = _lineup_standard_deviation(
+                    roster, candidate_lineup, current_week, position_sd
+                )
+                direction = {"underdog": 1.0, "favorite": -1.0}.get(role, 0.0)
+                candidate_adjusted_projection = (
+                    candidate_projection + direction * z_value * candidate_sd
+                )
+                if candidate_adjusted_projection <= current_adjusted_projection + swap_margin:
+                    continue
+                candidate_probability = win_probability(
+                    candidate_projection - opponent_projection,
+                    math.sqrt(candidate_sd ** 2 + opponent_sd ** 2),
+                )
+                if candidate_probability <= current_probability:
+                    continue
+                if (
+                    best_candidate is None
+                    or candidate_probability > best_candidate[0]
+                ):
+                    best_candidate = (
+                        candidate_probability,
+                        candidate_lineup,
+                        starter,
+                        alternative,
+                        state,
+                    )
+
+        if best_candidate is None:
+            break
+        _, lineup, outgoing, incoming, state = best_candidate
+        decisions.append(
+            f"{incoming.player} for {outgoing.player} at {outgoing.slot}"
+        )
+        visited_starter_sets.add(state)
+
+    return lineup, decisions
+
+
+def build_matchup_analysis(
+    my_roster: pd.DataFrame,
+    baseline_lineup: LineupRecommendation,
+    opponent_name: str,
+    opponent_id: int,
+    opponent_roster: pd.DataFrame,
+    positions_config: dict,
+    current_week: int,
+    config: dict,
+) -> tuple[LineupRecommendation, MatchupReport]:
+    """Calculate opponent projection, win probability, role, and lineup swaps."""
+    opponent_lineup = recommend_lineup(
+        opponent_roster, opponent_roster, positions_config, current_week
+    )
+    position_sd = config.get("position_sd", {})
+    opponent_sd = _lineup_standard_deviation(
+        opponent_roster, opponent_lineup, current_week, position_sd
+    )
+    baseline_sd = _lineup_standard_deviation(
+        my_roster, baseline_lineup, current_week, position_sd
+    )
+    probability = win_probability(
+        baseline_lineup.total_projection - opponent_lineup.total_projection,
+        math.sqrt(baseline_sd ** 2 + opponent_sd ** 2),
+    )
+    role = _matchup_role(
+        probability, config.get("win_probability_thresholds", {})
+    )
+    mode = {
+        "underdog": "ceiling (projection + z × SD)",
+        "favorite": "floor (projection − z × SD)",
+        "toss-up": "expected value (projection)",
+    }[role]
+    selected_lineup, decisions = _optimize_matchup_lineup(
+        my_roster,
+        baseline_lineup,
+        current_week,
+        position_sd,
+        opponent_lineup.total_projection,
+        opponent_sd,
+        role,
+        float(config.get("matchup_z", 0.5)),
+        float(config.get("lineup_swap_margin", 1.0)),
+    )
+    selected_sd = _lineup_standard_deviation(
+        my_roster, selected_lineup, current_week, position_sd
+    )
+    final_probability = win_probability(
+        selected_lineup.total_projection - opponent_lineup.total_projection,
+        math.sqrt(selected_sd ** 2 + opponent_sd ** 2),
+    )
+
+    injury_flags = [
+        f"{starter.player} ({starter.slot}) is {starter.status}"
+        for starter in opponent_lineup.starters
+        if starter.status
+        and (
+            starter.status.strip().upper()
+            in {"Q", "Q-", "D", "D-", "O", "OUT", "DOUBTFUL", "QUESTIONABLE"}
+            or starter.status.strip().upper().startswith(("Q-", "D-", "O-"))
+        )
+    ]
+    matchup = MatchupReport(
+        opponent_team_id=int(opponent_id),
+        opponent_name=opponent_name,
+        opponent_lineup=opponent_lineup,
+        opponent_projection=opponent_lineup.total_projection,
+        opponent_sd=opponent_sd,
+        team_sd=selected_sd,
+        win_probability=final_probability,
+        role=role,
+        lineup_mode=mode,
+        swing_decisions=decisions[:3] or [
+            f"No eligible swap cleared the {config.get('lineup_swap_margin', 1.0):.1f}-point margin."
+        ],
+        opponent_injury_flags=injury_flags,
+        followups=[
+            "Assumes player scoring outcomes are independent.",
+            "No NFL game/opponent data is present, so DEF/K versus the opposing QB hedge correlation is not modeled.",
+            "Rosters are selected by Owner ID; shared players are not modeled.",
+        ],
+        live_scoring_note=(
+            "Live points-banked scoring is unavailable: ffbot converts both "
+            "current-week projections and completed-game actuals to the same "
+            "numeric Week N field."
+        ),
+    )
+    return selected_lineup, matchup
+
+
 def _optimal_slot_assignments(
     players: pd.DataFrame, slots: list[str], week_col: str,
 ) -> dict[int, pd.Series]:
@@ -1405,6 +1774,66 @@ def simulate_post_move_roster(
     return simulated
 
 
+def matchup_transaction_score(
+    win_probability_delta: float,
+    ros_delta: Optional[float],
+    ros_weight: float,
+) -> float:
+    """Combine this-week win-probability change with a small ROS adjustment."""
+    return float(win_probability_delta) + float(ros_weight) * float(ros_delta or 0.0)
+
+
+def score_matchup_transactions(
+    df: pd.DataFrame,
+    my_roster: pd.DataFrame,
+    recommendations: list[AddDropRecommendation],
+    positions_config: dict,
+    current_week: int,
+    matchup: MatchupReport,
+    config: dict,
+) -> list[AddDropRecommendation]:
+    """Attach matchup win-probability changes and scores to proposed moves."""
+    position_sd = config.get("position_sd", {})
+    z_value = float(config.get("matchup_z", 0.5))
+    swap_margin = float(config.get("lineup_swap_margin", 1.0))
+    ros_weight = float(config.get("matchup_ros_weight", 0.002))
+
+    for rec in recommendations:
+        if rec.flagged:
+            continue
+        simulated = simulate_post_move_roster(
+            df, my_roster, [rec], current_week
+        )
+        baseline = recommend_lineup(
+            df, simulated, positions_config, current_week
+        )
+        selected, _ = _optimize_matchup_lineup(
+            simulated,
+            baseline,
+            current_week,
+            position_sd,
+            matchup.opponent_projection,
+            matchup.opponent_sd,
+            matchup.role,
+            z_value,
+            swap_margin,
+        )
+        own_sd = _lineup_standard_deviation(
+            simulated, selected, current_week, position_sd
+        )
+        move_probability = win_probability(
+            selected.total_projection - matchup.opponent_projection,
+            math.sqrt(own_sd ** 2 + matchup.opponent_sd ** 2),
+        )
+        rec.matchup_win_probability_delta = move_probability - matchup.win_probability
+        rec.matchup_transaction_score = matchup_transaction_score(
+            rec.matchup_win_probability_delta,
+            rec.ros_delta,
+            ros_weight,
+        )
+    return recommendations
+
+
 def build_action_plan(
     df: pd.DataFrame,
     my_roster: pd.DataFrame,
@@ -1423,35 +1852,32 @@ def build_action_plan(
     moves = [r for r in add_drop_recs if not r.flagged]
     skipped = [r for r in add_drop_recs if r.flagged]
 
-    # In must-win mode, protect the current week's optimized lineup. A move
-    # that only improves the bench is allowed only when the ROS gain is large
-    # enough to justify spending the roster slot.
-    if positions_config.get("must_win"):
-        min_bench_ros = float(positions_config.get("min_bench_move_ros_delta", 8.0))
-        retained = []
-        for rec in moves:
-            week_delta = rec.current_week_delta
-            ros_delta = rec.ros_delta
-            reject_reason = None
-            if week_delta is not None and week_delta < -0.01:
-                reject_reason = (
-                    f"Must-win filter: lowers this week's optimized lineup by {week_delta:.1f}"
+    retained = []
+    for rec in moves:
+        if (
+            rec.matchup_transaction_score is not None
+            and rec.matchup_transaction_score <= 0
+        ):
+            skipped.append(
+                replace(
+                    rec,
+                    flagged=True,
+                    flag_reason=(
+                        "Matchup transaction score is non-positive "
+                        f"({rec.matchup_transaction_score:+.4f})"
+                    ),
                 )
-            elif (
-                week_delta is not None
-                and abs(week_delta) <= 0.01
-                and ros_delta is not None
-                and ros_delta < min_bench_ros
-            ):
-                reject_reason = (
-                    f"Must-win filter: bench-only ROS gain {ros_delta:+.1f} "
-                    f"is below {min_bench_ros:.1f}"
-                )
-            if reject_reason:
-                skipped.append(replace(rec, flagged=True, flag_reason=reject_reason))
-            else:
-                retained.append(rec)
-        moves = retained
+            )
+        else:
+            retained.append(rec)
+    moves = retained
+    if any(rec.matchup_transaction_score is not None for rec in moves):
+        moves.sort(
+            key=lambda rec: rec.matchup_transaction_score
+            if rec.matchup_transaction_score is not None
+            else float("-inf"),
+            reverse=True,
+        )
 
     logger.info(
         f"Action plan: {len(moves)} moves to make, "
