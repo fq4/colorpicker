@@ -47,11 +47,12 @@ execution, dry-run by default, etc.).
 `config.yaml` holds defaults: `league_id`, `team_id`, `positions`, scoring settings,
 `bench_depth_minimums`, `ir_statuses`, `worst_vor_drop_note_threshold`, `locked_positions`,
 position-specific VOR thresholds, and matchup settings (`schedule`, `position_sd`,
-`win_probability_thresholds`, `matchup_z`, `lineup_swap_margin`, and
-`matchup_ros_weight`). It also contains `kickoff_times` for snapshot cleanliness and
-analytics settings. `schedule` maps week numbers to opponent team IDs; team names are
-resolved from the scraped DataFrame. `--league-id`, `--team-id`, `--opponent-id`,
-`--locked-positions`, and `--hypothetical-drop` CLI flags override these per-run.
+`forecast_error_sd_prior`, `win_probability_thresholds`, `matchup_z`,
+`lineup_swap_margin`, and `matchup_ros_weight`). It also contains `kickoff_times`
+for snapshot cleanliness and analytics settings. `schedule` maps week numbers to
+opponent team IDs; team names are resolved from the scraped DataFrame. `--league-id`,
+`--team-id`, `--opponent-id`, `--locked-positions`, and `--hypothetical-drop` CLI
+flags override these per-run.
 
 **Important:** `team_name` is NOT a maintained config value — it is derived at runtime
 from `team_id` via `get_team_name_from_id()` in `decision_engine.py`, using the `Owner`
@@ -181,9 +182,15 @@ unique per league/team/week so different runs never overwrite each other.
     must log a warning, preserve Yahoo projections and existing uncertainty behavior,
     record the failure reason in `analytics_info`, and never interrupt the weekly run.
     Forecast-error SD is not player-score SD; estimate it from walk-forward residuals
-    and shrink player estimates toward `position_sd`. Never use the heuristic
-    current-week projection-change signal for live scoring unless the owner explicitly
-    approves it.
+    and shrink player estimates toward the analytics-only `forecast_error_sd_prior`.
+    Derive that prior by position from pooled walk-forward residuals excluding byes;
+    when there are fewer than three residuals, fall back to `position_sd`. Do not
+    change engine `position_sd` to tune analytics uncertainty. For analytics, a
+    missing or zero clean Yahoo projection marks a bye; the engine's team-wide
+    all-zero rule requires at least three rostered players on that NFL team. Keep
+    zero actuals with positive clean projections as availability risk. Never use the
+    heuristic current-week projection-change signal for live scoring unless the owner
+    explicitly approves it.
 
 **Reasoning engine gating:** The reasoning engine is opt-in via
 `reasoning_engine.enabled` in `config.yaml` or `--reasoning-engine` on a run. Keep its
@@ -205,6 +212,9 @@ An investigation (see git history / prior session) confirmed:
 
 The repository's `origin` remote points to `https://github.com/fq4/colorpicker.git` — this is the correct upstream for this project. Do not change it.
 
+The unattended overnight changes are on `overnight/2026-11-05`; push that branch
+only, never `main`.
+
 ## Testing
 
 Always run the full suite after any change, not just tests for what you touched:
@@ -213,7 +223,7 @@ Always run the full suite after any change, not just tests for what you touched:
 python -m pytest tests/ -v
 ```
 
-As of the last verified run: 186 tests passing. If your change doesn't add or update a test,
+As of the last verified run: 191 tests passing. If your change doesn't add or update a test,
 that's a signal you may have skipped verification — this project's owner checks test
 coverage claims against actual pytest output, not summaries.
 

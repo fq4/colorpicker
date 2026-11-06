@@ -81,6 +81,8 @@ python -m analytics snapshot --week 10
 
 # Evaluate cached clean projections against completed actuals
 python -m analytics evaluate --week 9
+# Set the stale-snapshot comparison threshold (default: 72 hours)
+python -m analytics evaluate --week 9 --max-projection-age-hours 72
 
 # Write the prediction CSV consumed by the optional optimizer integration
 python -m analytics predict --week 9
@@ -144,6 +146,7 @@ python run_weekly.py --opponent-id 6
 | `min_vor_gain_to_recommend_add` | Per-position VOR threshold for add recommendations | Tune over time |
 | `schedule` | Optional week-to-opponent-team-ID map | League schedule |
 | `position_sd` | Fallback player scoring SD by position when fewer than 3 actuals exist | Tune from league history |
+| `forecast_error_sd_prior` | Analytics-only pooled walk-forward forecast-error SD prior; falls back to `position_sd` with fewer than 3 residuals | Derived from cached walk-forward residuals |
 | `win_probability_thresholds` | Favorite/underdog P(win) thresholds | Tune over time |
 | `lineup_swap_margin` | Minimum role-adjusted edge for a bench/starter swap | Tune over time |
 | `matchup_ros_weight` | Small weight on ROS transaction value alongside this week's P(win) | Tune over time |
@@ -219,7 +222,10 @@ each other. Cached data goes to `data/`, logs to `logs/`. All are gitignored.
 python -m pytest tests/ -v
 ```
 
-As of the last verified run: **186 tests passing**.
+As of the last verified run: **191 tests passing**.
+
+The unattended overnight changes are on `overnight/2026-11-05`; push and review
+that branch rather than `main`.
 
 ---
 
