@@ -1336,7 +1336,9 @@ def _player_standard_deviation(
                 team_values = pd.to_numeric(
                     team_roster[column], errors="coerce"
                 )
-                if (team_values.isna() | team_values.eq(0)).all():
+                if len(team_values) >= 3 and (
+                    team_values.isna() | team_values.eq(0)
+                ).all():
                     continue
             if value is not None:
                 actuals.append(value)

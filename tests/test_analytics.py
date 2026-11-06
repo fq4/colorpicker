@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from analytics.integration import load_model_predictions
+from analytics.evaluate import _bye_rule_disagreements
 from analytics.models import _error_sd, compute_metrics, forecast_walk_forward
 from analytics.store import AnalyticsStore
 from decision_engine import (
@@ -24,11 +25,22 @@ def _write_snapshot(path, rows, columns):
         writer.writerows(rows)
 
 
-def test_ingest_is_idempotent_and_marks_completed_team_byes(tmp_path):
-    csv_path = tmp_path / "league_123_week_2_20261001_120000.csv"
+def test_ingest_is_idempotent_and_uses_clean_projection_for_byes(tmp_path):
     columns = [
         "ID", "Name", "Team", "Position", "Owner ID", "Week 1", "Week 2"
     ]
+    week_one_path = tmp_path / "league_123_week_1_20260925_120000.csv"
+    _write_snapshot(
+        week_one_path,
+        [
+            {"ID": 1, "Name": "BUF RB", "Team": "BUF", "Position": "RB", "Owner ID": 1, "Week 1": 0, "Week 2": 14},
+            {"ID": 2, "Name": "BUF WR", "Team": "BUF", "Position": "WR", "Owner ID": 2, "Week 1": 0, "Week 2": 11},
+            {"ID": 3, "Name": "MIA RB", "Team": "MIA", "Position": "RB", "Owner ID": 1, "Week 1": 8, "Week 2": 12},
+            {"ID": 4, "Name": "MIA WR", "Team": "MIA", "Position": "WR", "Owner ID": 2, "Week 1": 10, "Week 2": 10},
+        ],
+        columns,
+    )
+    csv_path = tmp_path / "league_123_week_2_20261001_120000.csv"
     _write_snapshot(
         csv_path,
         [
@@ -45,12 +57,13 @@ def test_ingest_is_idempotent_and_marks_completed_team_byes(tmp_path):
         2: "2030-09-08T20:00:00-04:00",
     }
 
+    store.ingest_file(week_one_path, 123, locks)
     first = store.ingest_file(csv_path, 123, locks)
     second = store.ingest_file(csv_path, 123, locks)
 
     assert first["inserted"] is True
     assert second["inserted"] is False
-    assert len(store.snapshot_inventory(123)) == 1
+    assert len(store.snapshot_inventory(123)) == 2
     actuals = {
         row["player_id"]: row for row in store.actuals(123)
     }
@@ -58,7 +71,59 @@ def test_ingest_is_idempotent_and_marks_completed_team_byes(tmp_path):
     assert actuals["2"]["is_bye"] == 1
     assert actuals["3"]["is_bye"] == 0
     assert actuals["3"]["value"] == 0
+    assert actuals["1"]["engine_is_bye"] == 0
     store.close()
+
+
+def test_clean_projection_keeps_lone_k_zero_and_projected_dnp_as_real(tmp_path):
+    columns = [
+        "ID", "Name", "Team", "Position", "Owner ID", "Week 1", "Week 2"
+    ]
+    week_one_path = tmp_path / "league_123_week_1_20260925_120000.csv"
+    week_two_path = tmp_path / "league_123_week_2_20261001_120000.csv"
+    _write_snapshot(
+        week_one_path,
+        [
+            {"ID": 1, "Name": "Kicker", "Team": "BUF", "Position": "K", "Owner ID": 1, "Week 1": 4, "Week 2": 0},
+            {"ID": 2, "Name": "DNP Receiver", "Team": "MIA", "Position": "WR", "Owner ID": 1, "Week 1": 10, "Week 2": 0},
+        ],
+        columns,
+    )
+    _write_snapshot(
+        week_two_path,
+        [
+            {"ID": 1, "Name": "Kicker", "Team": "BUF", "Position": "K", "Owner ID": 1, "Week 1": 0, "Week 2": 4},
+            {"ID": 2, "Name": "DNP Receiver", "Team": "MIA", "Position": "WR", "Owner ID": 1, "Week 1": 0, "Week 2": 10},
+        ],
+        columns,
+    )
+    store = AnalyticsStore(tmp_path / "analytics.sqlite3")
+    locks = {
+        1: "2030-09-01T20:00:00-04:00",
+        2: "2030-09-08T20:00:00-04:00",
+    }
+
+    store.ingest_file(week_one_path, 123, locks)
+    store.ingest_file(week_two_path, 123, locks)
+
+    actuals = {row["player_id"]: row for row in store.actuals(123)}
+    assert actuals["1"]["value"] == 0
+    assert actuals["1"]["clean_projection_value"] == 4
+    assert actuals["1"]["is_bye"] == 0
+    assert actuals["2"]["value"] == 0
+    assert actuals["2"]["clean_projection_value"] == 10
+    assert actuals["2"]["is_bye"] == 0
+    store.close()
+
+
+def test_bye_rule_disagreements_include_only_rostered_mismatches():
+    rows = [
+        {"is_rostered": 1, "is_bye": 1, "engine_is_bye": 0, "player_id": "1"},
+        {"is_rostered": 1, "is_bye": 0, "engine_is_bye": 0, "player_id": "2"},
+        {"is_rostered": 0, "is_bye": 1, "engine_is_bye": 0, "player_id": "3"},
+    ]
+
+    assert _bye_rule_disagreements(rows) == [rows[0]]
 
 
 def test_walk_forward_forecast_does_not_read_target_or_future_actuals():

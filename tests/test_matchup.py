@@ -50,6 +50,16 @@ def test_player_sd_excludes_team_bye_zero_but_keeps_other_zero():
                 "Week 5": 10,
             },
             {
+                "Name": "Third Teammate",
+                "Team": "BUF",
+                "Position": "TE",
+                "Week 1": 8,
+                "Week 2": 10,
+                "Week 3": 0,
+                "Week 4": 9,
+                "Week 5": 10,
+            },
+            {
                 "Name": "Other Team Player",
                 "Team": "MIA",
                 "Position": "WR",
@@ -76,6 +86,26 @@ def test_player_sd_excludes_team_bye_zero_but_keeps_other_zero():
     assert without_dnp == pytest.approx(1.0)
     assert with_dnp == pytest.approx(pd.Series([12, 14, 13, 0]).std(ddof=1))
 
+
+def test_engine_does_not_exclude_lone_rostered_player_zero_as_bye():
+    roster = pd.DataFrame(
+        [
+            {
+                "Name": "Kicker",
+                "Team": "BUF",
+                "Position": "K",
+                "Week 1": 0,
+                "Week 2": 0,
+                "Week 3": 0,
+            }
+        ]
+    )
+
+    standard_deviation = _player_standard_deviation(
+        roster.iloc[0], 4, {"K": 4.0}, roster
+    )
+
+    assert standard_deviation == 0.0
 
 def test_opponent_roster_is_resolved_and_validated(mock_df):
     name, roster = get_opponent_roster(mock_df, 7, 2, 3)

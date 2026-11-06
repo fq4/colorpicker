@@ -107,6 +107,14 @@ def _snapshot_diff_evidence(store, league_id, max_week):
     return evidence
 
 
+def _bye_rule_disagreements(actual_rows):
+    return [
+        row
+        for row in actual_rows
+        if row["is_rostered"] and row["is_bye"] != row["engine_is_bye"]
+    ]
+
+
 def _table_row(cells):
     return "| " + " | ".join(str(cell).replace("|", "\\|") for cell in cells) + " |"
 
@@ -288,6 +296,7 @@ def write_accuracy_report(
         else:
             other_untracked_count += 1
     snapshot_diffs = _snapshot_diff_evidence(store, league_id, max_week)
+    bye_disagreements = _bye_rule_disagreements(actual_rows)
     target_snapshot = {}
     for week in range(1, max_week + 1):
         rows = store.clean_projections(league_id, week)
@@ -373,6 +382,51 @@ def write_accuracy_report(
                 (week, details["matched"], details["changed"], examples)
             )
         )
+
+    report_lines.extend(
+        [
+            "",
+            "### Bye-rule disagreements",
+            "",
+            "Analytics treats a missing or zero clean Yahoo projection as a bye; "
+            "the engine excludes a week only when at least three rostered players "
+            "from the NFL team all have zero or missing actuals. The table lists "
+            "every rostered player-week where those rules disagree.",
+            "",
+            _table_row(
+                (
+                    "Week",
+                    "Player",
+                    "NFL team",
+                    "Actual",
+                    "Clean projection",
+                    "Analytics bye",
+                    "Engine bye",
+                )
+            ),
+            _table_row(("---:", "---", "---", "---:", "---:", ":---:", ":---:")),
+        ]
+    )
+    for row in bye_disagreements:
+        report_lines.append(
+            _table_row(
+                (
+                    row["target_week"],
+                    row["player_name"],
+                    row["nfl_team"] or "n/a",
+                    f'{row["value"]:.2f}',
+                    (
+                        f'{row["clean_projection_value"]:.2f}'
+                        if row["clean_projection_value"] is not None
+                        else "missing"
+                    ),
+                    "yes" if row["is_bye"] else "no",
+                    "yes" if row["engine_is_bye"] else "no",
+                )
+            )
+        )
+    if not bye_disagreements:
+        report_lines.append(_table_row(("none", "", "", "", "", "", "")))
 
     try:
         report_files = sorted(
