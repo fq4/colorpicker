@@ -81,6 +81,9 @@ report.py              Terminal + markdown report formatting, including the Acti
 run_weekly.py           CLI entry point — see Usage below
 analytics/              Optional cached-scrape analytics, stdlib SQLite, walk-forward models
                         and CSV-only optimizer integration
+scheduling.py           Pure kickoff-based week and next-lock functions
+run_job.py              One-shot snapshot, weekly, and settle scheduler jobs
+install_schedule.ps1    Idempotent Windows Task Scheduler installer/uninstaller
 tests/                  pytest suite. Run the FULL suite after any change, not just new tests.
 ```
 
@@ -98,10 +101,15 @@ python run_weekly.py --locked-positions DEF,TE  # suppress add/drop suggestions 
 python -m analytics ingest  # idempotently ingest canonical cached scrapes
 python -m analytics evaluate --week 9  # evaluate clean forecasts against completed actuals
 python -m analytics predict --week 9  # write the optional CSV for the optimizer
+python run_job.py weekly --dry-run  # preview scheduler work without scraping
+powershell -ExecutionPolicy Bypass -File .\install_schedule.ps1  # install Windows jobs
+powershell -ExecutionPolicy Bypass -File .\install_schedule.ps1 -Uninstall  # remove them
 ```
 
 Reports save to `reports/league_{league_id}_team_{team_id}_week_{n}.md` — filenames are
 unique per league/team/week so different runs never overwrite each other.
+The optional scheduler writes to `logs/scheduler.log` and copies the latest weekly
+report to `reports/latest.md`.
 
 ## Design principles already established — don't relitigate these
 
@@ -191,6 +199,14 @@ unique per league/team/week so different runs never overwrite each other.
     zero actuals with positive clean projections as availability risk. Never use the
     heuristic current-week projection-change signal for live scoring unless the owner
     explicitly approves it.
+16. **The Windows scheduler is optional, one-shot, and dry-run only.** Keep week
+    selection in pure, clock-injected `scheduling.py` functions derived from
+    `kickoff_times`, not `ffbot.current_week()`. Scheduler jobs may scrape at most
+    once, must serialize through the lock and log failures, and must never use
+    `--execute` or write to Yahoo. A snapshot is valid only before its target
+    kickoff; refuse a late snapshot rather than labeling post-lock data clean.
+    Do not turn the job runner into a daemon. The Task Scheduler installer must
+    remain optional and run jobs only for the logged-in user.
 
 **Reasoning engine gating:** The reasoning engine is opt-in via
 `reasoning_engine.enabled` in `config.yaml` or `--reasoning-engine` on a run. Keep its
@@ -212,8 +228,8 @@ An investigation (see git history / prior session) confirmed:
 
 The repository's `origin` remote points to `https://github.com/fq4/colorpicker.git` — this is the correct upstream for this project. Do not change it.
 
-The unattended overnight changes are on `overnight/2026-11-05`; push that branch
-only, never `main`.
+The unattended overnight changes are on `overnight/2026-11-05`. The scheduler
+implementation is on `scheduler/weekly-jobs`; push that branch only, never `main`.
 
 ## Testing
 
@@ -223,7 +239,7 @@ Always run the full suite after any change, not just tests for what you touched:
 python -m pytest tests/ -v
 ```
 
-As of the last verified run: 191 tests passing. If your change doesn't add or update a test,
+As of the last verified run: 206 tests passing. If your change doesn't add or update a test,
 that's a signal you may have skipped verification — this project's owner checks test
 coverage claims against actual pytest output, not summaries.
 

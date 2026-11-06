@@ -5,7 +5,7 @@
 > read-only scraper, runs an optimizer, and produces add/drop recommendations
 > with an actionable weekly plan.
 
-**Last updated:** 2026-11-05
+**Last updated:** 2026-11-06
 
 ---
 
@@ -86,7 +86,46 @@ python -m analytics evaluate --week 9 --max-projection-age-hours 72
 
 # Write the prediction CSV consumed by the optional optimizer integration
 python -m analytics predict --week 9
+
+# Preview a scheduler job without scraping
+python run_job.py weekly --dry-run
 ```
+
+---
+
+## Optional Windows job scheduler
+
+The one-shot scheduler removes the need to remember the weekly steps without
+running a daemon. From the repository directory in PowerShell, install or
+update the three Windows Task Scheduler jobs:
+
+```powershell
+.\install_schedule.ps1
+```
+
+The installer registers `ffbot-snapshot` (Thursday 17:00),
+`ffbot-weekly` (Sunday 11:30), and `ffbot-settle` (Tuesday 06:00). The weekly
+job forces one refresh and runs the optimizer in dry-run mode; no scheduler job
+submits Yahoo transactions. Each job is serialized with a lock, writes to
+`logs/scheduler.log`, and sends a Windows toast on completion or failure.
+
+Preview any job without scraping:
+
+```powershell
+python run_job.py snapshot --dry-run
+python run_job.py weekly --dry-run
+python run_job.py settle --dry-run
+```
+
+Uninstall the scheduled tasks:
+
+```powershell
+.\install_schedule.ps1 -Uninstall
+```
+
+Tasks run only while your Windows user is logged in. They request wake-from-sleep
+and start-after-missed-run behavior, but the computer must be powered on and
+available; do not rely on these jobs while it is shut down.
 
 ---
 
@@ -186,6 +225,9 @@ config.yaml          Defaults for league_id, team_id, positions, thresholds
 data_layer.py         get_fresh_data(), direct CSV caching,
                        get_latest_cached_or_fresh(max_age_hours),
                        get_team_name_from_id()
+scheduling.py         Pure kickoff-based game-week and next-lock selection
+run_job.py             One-shot snapshot, weekly, and settle jobs with dry-run plans
+install_schedule.ps1  Idempotent Windows Task Scheduler installer/uninstaller
 decision_engine.py     Core logic: get_my_roster(), flag_bench_depth_gaps(),
                        recommend_adds_drops(), recommend_lineup(),
                        build_action_plan(), simulate_post_move_roster()
@@ -222,10 +264,10 @@ each other. Cached data goes to `data/`, logs to `logs/`. All are gitignored.
 python -m pytest tests/ -v
 ```
 
-As of the last verified run: **191 tests passing**.
+As of the last verified run: **206 tests passing**.
 
-The unattended overnight changes are on `overnight/2026-11-05`; push and review
-that branch rather than `main`.
+The unattended overnight changes are on `overnight/2026-11-05`. The scheduler
+changes are on `scheduler/weekly-jobs`; review that branch rather than `main`.
 
 ---
 
