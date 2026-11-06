@@ -22,6 +22,15 @@ position_sd:
   TE: 6.0
   K: 4.0
   DEF: 7.0
+# Analytics-only pooled walk-forward blend residual SD priors; engine position_sd is unchanged.
+forecast_error_sd_prior:
+  default: 8.0
+  QB: 8.067
+  RB: 5.484
+  WR: 5.158
+  TE: 4.038
+  K: 4.690
+  DEF: 5.320
 win_probability_thresholds:
   favorite: 0.60
   underdog: 0.40

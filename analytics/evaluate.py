@@ -3,7 +3,12 @@ import hashlib
 from collections import defaultdict
 from pathlib import Path
 
-from analytics.models import MODEL_NAMES, compute_metrics, forecast_walk_forward
+from analytics.models import (
+    MODEL_NAMES,
+    compute_metrics,
+    derive_forecast_error_sd_priors,
+    forecast_walk_forward,
+)
 
 
 MODEL_LABELS = {
@@ -113,6 +118,24 @@ def _bye_rule_disagreements(actual_rows):
         for row in actual_rows
         if row["is_rostered"] and row["is_bye"] != row["engine_is_bye"]
     ]
+
+
+def _position_sd_coverage(forecasts, actual_lookup):
+    coverage = defaultdict(lambda: [0, 0])
+    for week, week_forecasts in forecasts.items():
+        for player_id, forecast in week_forecasts.items():
+            actual = actual_lookup.get((player_id, week))
+            if (
+                actual is None
+                or actual["is_bye"]
+                or forecast["yahoo_proj"] <= 0
+            ):
+                continue
+            position_coverage = coverage[forecast["position"]]
+            position_coverage[1] += 1
+            if abs(actual["value"] - forecast["model_proj"]) <= forecast["model_sd"]:
+                position_coverage[0] += 1
+    return coverage
 
 
 def _table_row(cells):
@@ -226,13 +249,22 @@ def write_accuracy_report(
     reports_directory,
     minimum_improvement,
     minimum_weeks,
+    forecast_error_sd_prior=None,
 ):
-    forecasts = forecast_walk_forward(store, league_id, max_week, position_sd)
+    forecasts_before = forecast_walk_forward(store, league_id, max_week, position_sd)
     actual_rows = store.actuals(league_id)
     actual_lookup = {
         (row["player_id"], row["target_week"]): dict(row)
         for row in actual_rows
     }
+    derived_priors, prior_summary = derive_forecast_error_sd_priors(
+        forecasts_before, actual_lookup, position_sd
+    )
+    forecasts = forecast_walk_forward(
+        store, league_id, max_week, position_sd, forecast_error_sd_prior
+    )
+    coverage_before = _position_sd_coverage(forecasts_before, actual_lookup)
+    coverage_after = _position_sd_coverage(forecasts, actual_lookup)
     metrics, coverage, eligible_by_week = _metric_records(forecasts, actual_lookup)
 
     overall = {}
@@ -535,6 +567,61 @@ def write_accuracy_report(
             )
         )
 
+    report_lines.extend(
+        [
+            "",
+            "## Forecast-error SD priors by position",
+            "",
+            "Residuals are pooled from walk-forward blend forecasts and actuals, "
+            "excluding bye weeks and non-positive Yahoo projections. The derived "
+            "prior uses sample residual SD with at least three observations; "
+            "otherwise it falls back to the existing score-spread `position_sd`. "
+            "Coverage compares blend residuals against each player's shrunk blend "
+            "SD before versus after applying `forecast_error_sd_prior`.",
+            "",
+            _table_row(
+                (
+                    "Position",
+                    "N",
+                    "Residual SD",
+                    "MAE",
+                    "Derived prior",
+                    "Configured prior",
+                    "Coverage before",
+                    "Coverage after",
+                )
+            ),
+            _table_row(
+                ("---", "---:", "---:", "---:", "---:", "---:", "---:", "---:")
+            ),
+        ]
+    )
+    for position in sorted(prior_summary):
+        summary = prior_summary[position]
+        prior_configured = (forecast_error_sd_prior or {}).get(
+            position,
+            (forecast_error_sd_prior or {}).get(
+                "default",
+                position_sd.get(position, position_sd.get("default", 8.0)),
+            ),
+        )
+        before = coverage_before.get(position, [0, 0])
+        after = coverage_after.get(position, [0, 0])
+        report_lines.append(
+            _table_row(
+                (
+                    position,
+                    summary["n"],
+                    _format(summary["residual_sd"]),
+                    _format(summary["mae"]),
+                    _format(derived_priors[position]),
+                    _format(float(prior_configured)),
+                    _format(before[0] / before[1] if before[1] else None),
+                    _format(after[0] / after[1] if after[1] else None),
+                )
+            )
+        )
+
     coverage_summary = []
     for model in MODEL_NAMES:
         values = [
@@ -603,7 +690,8 @@ def write_accuracy_report(
             "walk-forward forecasts. No regression model was added.",
             "- Yahoo and blend SDs estimate forecast error, not player score spread. "
             "At three or more prior non-bye residuals, the sample error SD is shrunk "
-            "toward the configured position SD; otherwise the position SD is used.",
+            "toward the analytics-only forecast-error SD prior; otherwise that "
+            "position's configured prior is used.",
             "- ±1 SD calibration coverage is shown for Yahoo and blend. A nominal "
             "normal interval target is about 68%; this sample is too small to treat "
             "calibration as definitive.",
@@ -624,4 +712,5 @@ def write_accuracy_report(
         "improvement": improvement,
         "beats_yahoo": beats_yahoo,
         "completed_weeks": len(valid_weeks),
+        "forecast_error_sd_prior": prior_summary,
     }

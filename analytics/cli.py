@@ -124,6 +124,7 @@ def _evaluate_command(args, config, kickoff_times, store):
         "reports",
         config.get("model_projection_min_mae_improvement", 0.25),
         config.get("model_projection_min_weeks", 6),
+        config.get("forecast_error_sd_prior", {}),
     )
     yahoo_mae = result["overall"]["yahoo"]["mae"]
     blend_mae = result["overall"]["blend"]["mae"]
@@ -139,7 +140,11 @@ def _evaluate_command(args, config, kickoff_times, store):
 def _predict_command(args, config, store):
     target_week = args.week
     forecasts = forecast_walk_forward(
-        store, config["league_id"], target_week, config.get("position_sd", {})
+        store,
+        config["league_id"],
+        target_week,
+        config.get("position_sd", {}),
+        config.get("forecast_error_sd_prior", {}),
     )
     report_result = write_accuracy_report(
         Path(args.output_dir) / "accuracy_report.md",
@@ -151,6 +156,7 @@ def _predict_command(args, config, store):
         "reports",
         config.get("model_projection_min_mae_improvement", 0.25),
         config.get("model_projection_min_weeks", 6),
+        config.get("forecast_error_sd_prior", {}),
     )
     path = (
         Path(args.output_dir)

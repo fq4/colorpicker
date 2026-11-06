@@ -6,7 +6,12 @@ import pytest
 
 from analytics.integration import load_model_predictions
 from analytics.evaluate import _bye_rule_disagreements
-from analytics.models import _error_sd, compute_metrics, forecast_walk_forward
+from analytics.models import (
+    _error_sd,
+    compute_metrics,
+    derive_forecast_error_sd_priors,
+    forecast_walk_forward,
+)
 from analytics.store import AnalyticsStore
 from decision_engine import (
     LineupRecommendation,
@@ -162,6 +167,48 @@ def test_walk_forward_forecast_does_not_read_target_or_future_actuals():
     assert after["model_proj"] == before["model_proj"]
     assert after["ewma"] == before["ewma"]
     assert after["trained_through_week"] == 2
+    with_prior = forecast_walk_forward(
+        store, 123, 3, {"default": 8.0}, {"WR": 4.0}
+    )[3]["1"]
+    assert with_prior["model_sd"] == 4.0
+    assert before["model_sd"] == 8.0
+
+
+def test_forecast_error_priors_use_pooled_walk_forward_residuals_and_fallback():
+    forecasts = {
+        week: {
+            "1": {
+                "position": "WR",
+                "yahoo_proj": 10.0,
+                "model_proj": 10.0,
+            },
+            "2": {
+                "position": "K",
+                "yahoo_proj": 5.0,
+                "model_proj": 5.0,
+            },
+        }
+        for week in range(1, 5)
+    }
+    actual_lookup = {
+        ("1", 1): {"value": 11.0, "is_bye": 0},
+        ("1", 2): {"value": 13.0, "is_bye": 0},
+        ("1", 3): {"value": 1000.0, "is_bye": 1},
+        ("1", 4): {"value": 17.0, "is_bye": 0},
+        ("2", 1): {"value": 6.0, "is_bye": 0},
+        ("2", 2): {"value": 7.0, "is_bye": 0},
+    }
+
+    priors, summary = derive_forecast_error_sd_priors(
+        forecasts, actual_lookup, {"default": 8.0, "K": 4.0}
+    )
+
+    assert summary["WR"]["n"] == 3
+    assert summary["WR"]["residual_sd"] == pytest.approx((28 / 3) ** 0.5)
+    assert summary["WR"]["mae"] == pytest.approx(11 / 3)
+    assert priors["WR"] == summary["WR"]["residual_sd"]
+    assert summary["K"]["n"] == 2
+    assert priors["K"] == 4.0
 
 
 def test_metric_math_and_forecast_error_sd_shrinkage():

@@ -1,5 +1,6 @@
 import math
 from collections import defaultdict
+from statistics import stdev
 
 from analytics import MODEL_VERSION
 from analytics.store import normalize_player_id
@@ -20,6 +21,14 @@ def _position_sd(position_sd, position):
         return 8.0
 
 
+def _forecast_error_prior_sd(position_sd, forecast_error_sd_prior, position):
+    if forecast_error_sd_prior and (
+        position in forecast_error_sd_prior or "default" in forecast_error_sd_prior
+    ):
+        return _position_sd(forecast_error_sd_prior, position)
+    return _position_sd(position_sd, position)
+
+
 def _error_sd(residuals, prior_sd):
     if len(residuals) < 3:
         return prior_sd
@@ -30,6 +39,49 @@ def _error_sd(residuals, prior_sd):
     sample_sd = math.sqrt(sample_variance)
     weight = len(residuals) / (len(residuals) + SHRINKAGE_PRIOR_GAMES)
     return max(0.1, weight * sample_sd + (1 - weight) * prior_sd)
+
+
+def derive_forecast_error_sd_priors(
+    forecasts,
+    actual_lookup,
+    position_sd,
+    minimum_residuals=3,
+):
+    residuals_by_position = defaultdict(list)
+    for week, week_forecasts in forecasts.items():
+        for player_id, forecast in week_forecasts.items():
+            actual = actual_lookup.get((player_id, week))
+            if (
+                actual is None
+                or actual["is_bye"]
+                or forecast["yahoo_proj"] <= 0
+            ):
+                continue
+            residuals_by_position[forecast["position"]].append(
+                actual["value"] - forecast["model_proj"]
+            )
+
+    priors = {}
+    summary = {}
+    for position in sorted(FANTASY_POSITIONS):
+        residuals = residuals_by_position[position]
+        residual_sd = stdev(residuals) if len(residuals) >= 2 else None
+        priors[position] = (
+            residual_sd
+            if len(residuals) >= minimum_residuals
+            else _position_sd(position_sd, position)
+        )
+        summary[position] = {
+            "n": len(residuals),
+            "residual_sd": residual_sd,
+            "mae": (
+                sum(abs(residual) for residual in residuals) / len(residuals)
+                if residuals
+                else None
+            ),
+            "prior_sd": priors[position],
+        }
+    return priors, summary
 
 
 def _history_values(actuals_by_player, player_id, before_week):
@@ -72,7 +124,13 @@ def _fit_blend_weights(history_rows):
     return weights
 
 
-def forecast_walk_forward(store, league_id, max_week, position_sd):
+def forecast_walk_forward(
+    store,
+    league_id,
+    max_week,
+    position_sd,
+    forecast_error_sd_prior=None,
+):
     actual_rows = store.actuals(league_id)
     actuals_by_player = defaultdict(list)
     actual_lookup = {}
@@ -146,7 +204,9 @@ def forecast_walk_forward(store, league_id, max_week, position_sd):
             bias_adjusted = yahoo + position_bias.get(position, 0.0)
             blend_weight = blend_weights.get(position, 0.5)
             blend = blend_weight * yahoo + (1 - blend_weight) * ewma_value
-            prior_sd = _position_sd(position_sd, position)
+            prior_sd = _forecast_error_prior_sd(
+                position_sd, forecast_error_sd_prior or {}, position
+            )
             player_residuals = residuals_by_player[player_id]
             week_forecasts[player_id] = {
                 "league_id": str(league_id),
