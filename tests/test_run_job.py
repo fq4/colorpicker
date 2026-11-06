@@ -1,4 +1,5 @@
 from datetime import datetime
+import base64
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from run_job import (
     FileLock,
     JobLockError,
     LateSnapshotError,
+    _show_toast,
     _lock_status,
     _validate_snapshot_lock,
     build_job_plan,
@@ -127,3 +129,23 @@ def test_dry_run_entrypoint_prints_plan_without_running_a_scrape(
     assert "Lock status: available" in output
     assert "analytics" in output and "--week 10" in output
     assert not (tmp_path / "data").exists()
+
+
+def test_toast_uses_native_windows_notifications_without_extra_packages(
+    tmp_path, monkeypatch
+):
+    import run_job
+
+    calls = []
+    monkeypatch.setattr(run_job.subprocess, "run", lambda *args, **kwargs: calls.append(args))
+
+    _show_toast("weekly", False, tmp_path / "logs" / "scheduler.log")
+
+    command = calls[0][0]
+    script = command[-1]
+    encoded_xml = script.split("FromBase64String('", 1)[1].split("')", 1)[0]
+    xml = base64.b64decode(encoded_xml).decode("utf-8")
+    assert command[0] == "powershell.exe"
+    assert "ToastNotificationManager" in script
+    assert "ffbot scheduler: weekly failed" in xml
+    assert "scheduler.log" in xml
