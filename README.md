@@ -219,7 +219,7 @@ each other. Cached data goes to `data/`, logs to `logs/`. All are gitignored.
 python -m pytest tests/ -v
 ```
 
-As of the last verified run: **181 tests passing**.
+As of the last verified run: **186 tests passing**.
 
 ---
 

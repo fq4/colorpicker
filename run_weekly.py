@@ -86,6 +86,58 @@ def build_positions_config(config: dict) -> dict:
     }
 
 
+def _load_model_predictions_safely(df, config, current_week, logger):
+    prediction_path = (
+        Path("analytics_out")
+        / f"league_{config['league_id']}_week_{current_week}_predictions.csv"
+    )
+    try:
+        if (
+            config.get("use_model_sd", False)
+            or config.get("use_model_projections", False)
+            or prediction_path.exists()
+        ):
+            from analytics.integration import load_model_predictions
+
+            return load_model_predictions(
+                df.copy(deep=True), config, current_week, logger
+            )
+
+        info = {
+            "prediction_file": str(prediction_path),
+            "projection_source": "Yahoo",
+            "sd_source": "position SD / historical actuals",
+            "used_projections": False,
+            "used_sd": False,
+            "status": "model flags disabled; prediction file missing",
+            "player_values": [],
+        }
+        logger.info(
+            "Analytics source: Yahoo projections and current uncertainty behavior "
+            "(model flags disabled; prediction file missing)"
+        )
+        return df, {}, info
+    except Exception as exc:
+        failure_reason = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "Optional analytics failed; continuing with Yahoo projections and "
+            f"existing uncertainty behavior: {failure_reason}"
+        )
+        return df, {}, {
+            "prediction_file": str(prediction_path),
+            "projection_source": "Yahoo",
+            "sd_source": "position SD / historical actuals",
+            "used_projections": False,
+            "used_sd": False,
+            "status": (
+                "analytics failed; using Yahoo/current behavior: "
+                f"{failure_reason}"
+            ),
+            "failure_reason": failure_reason,
+            "player_values": [],
+        }
+
+
 def run_weekly(
     config: dict,
     week: int | None = None,
@@ -129,35 +181,9 @@ def run_weekly(
 
     # Ensure expected columns exist
     df = ensure_data_columns(df)
-    prediction_path = (
-        Path("analytics_out")
-        / f"league_{config['league_id']}_week_{current_week}_predictions.csv"
+    df, model_sd_by_player, analytics_info = _load_model_predictions_safely(
+        df, config, current_week, logger
     )
-    if (
-        config.get("use_model_sd", False)
-        or config.get("use_model_projections", False)
-        or prediction_path.exists()
-    ):
-        from analytics.integration import load_model_predictions
-
-        df, model_sd_by_player, analytics_info = load_model_predictions(
-            df, config, current_week, logger
-        )
-    else:
-        model_sd_by_player = {}
-        analytics_info = {
-            "prediction_file": str(prediction_path),
-            "projection_source": "Yahoo",
-            "sd_source": "position SD / historical actuals",
-            "used_projections": False,
-            "used_sd": False,
-            "status": "model flags disabled; prediction file missing",
-            "player_values": [],
-        }
-        logger.info(
-            "Analytics source: Yahoo projections and current uncertainty behavior "
-            "(model flags disabled; prediction file missing)"
-        )
 
     # 1.5 Derive team_name from team_id via the scraped data
     from data_layer import get_team_name_from_id

@@ -172,15 +172,18 @@ unique per league/team/week so different runs never overwrite each other.
    banked or live P(win) until actual/projection provenance is available. NFL game
    correlation, including DEF/K versus opposing QB hedges, is also out of scope until
    the source data includes game opponent identifiers.
-15. **Analytics stays separate, optional, and file-based.** The analytics package may
-    learn from cached scrapes and SQLite using only the standard library, but it must not
-    scrape Yahoo itself or become a required weekly dependency. Its only optimizer
-    integration is an exported predictions CSV plus the opt-in `use_model_sd` and
-    `use_model_projections` flags, both false by default. Missing or stale predictions
-    must fall back to Yahoo/current behavior. Forecast-error SD is not player-score SD;
-    estimate it from walk-forward residuals and shrink player estimates toward
-    `position_sd`. Never use the heuristic current-week projection-change signal for
-    live scoring unless the owner explicitly approves it.
+15. **Analytics stays separate, optional, file-based, and failure-isolated.** The
+    analytics package may learn from cached scrapes and SQLite using only the standard
+    library, but it must not scrape Yahoo itself or become a required weekly dependency.
+    Its only optimizer integration is an exported predictions CSV plus the opt-in
+    `use_model_sd` and `use_model_projections` flags, both false by default. Missing,
+    stale, malformed, or unreadable predictions—and any other analytics loading error—
+    must log a warning, preserve Yahoo projections and existing uncertainty behavior,
+    record the failure reason in `analytics_info`, and never interrupt the weekly run.
+    Forecast-error SD is not player-score SD; estimate it from walk-forward residuals
+    and shrink player estimates toward `position_sd`. Never use the heuristic
+    current-week projection-change signal for live scoring unless the owner explicitly
+    approves it.
 
 **Reasoning engine gating:** The reasoning engine is opt-in via
 `reasoning_engine.enabled` in `config.yaml` or `--reasoning-engine` on a run. Keep its
@@ -210,7 +213,7 @@ Always run the full suite after any change, not just tests for what you touched:
 python -m pytest tests/ -v
 ```
 
-As of the last verified run: 181 tests passing. If your change doesn't add or update a test,
+As of the last verified run: 186 tests passing. If your change doesn't add or update a test,
 that's a signal you may have skipped verification — this project's owner checks test
 coverage claims against actual pytest output, not summaries.
 

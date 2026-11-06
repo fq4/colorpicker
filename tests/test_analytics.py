@@ -110,7 +110,9 @@ def test_metric_math_and_forecast_error_sd_shrinkage():
     assert _error_sd([0.0, 2.0, 4.0], 8.0) < 8.0
 
 
-def _prediction_csv(path, trained_week=8, weeks=4, yahoo_mae=10, model_mae=9):
+def _prediction_csv(
+    path, trained_week=8, weeks=4, yahoo_mae=10, model_mae=9, league_id=123
+):
     columns = [
         "league_id", "player_id", "player_name", "position",
         "yahoo_proj", "model_proj", "model_sd", "model_version",
@@ -123,7 +125,7 @@ def _prediction_csv(path, trained_week=8, weeks=4, yahoo_mae=10, model_mae=9):
         path,
         [
             {
-                "league_id": 123,
+                "league_id": league_id,
                 "player_id": 1,
                 "player_name": "Receiver",
                 "position": "WR",
@@ -262,3 +264,79 @@ def test_missing_player_sd_uses_the_existing_position_fallback():
     )
 
     assert standard_deviation == pytest.approx((5.0 ** 2 + 8.0 ** 2) ** 0.5)
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason_fragment"),
+    [
+        ("wrong_league", "belongs to league 999"),
+        ("missing_columns", "missing required columns"),
+        ("duplicates", "Duplicate player_id"),
+        ("bad_values", "Invalid model_proj"),
+        ("unreadable", "test unreadable"),
+    ],
+)
+def test_weekly_run_falls_back_when_analytics_input_fails(
+    tmp_path, monkeypatch, failure, reason_fragment
+):
+    from pathlib import Path
+
+    from run_weekly import _load_model_predictions_safely
+
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "analytics_out" / "league_123_week_9_predictions.csv"
+    if failure == "wrong_league":
+        _prediction_csv(path, league_id=999)
+    elif failure == "missing_columns":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_snapshot(path, [{"league_id": 123}], ["league_id"])
+    else:
+        _prediction_csv(path)
+        with path.open("r", encoding="utf-8", newline="") as stream:
+            reader = csv.DictReader(stream)
+            row = next(reader)
+            columns = reader.fieldnames
+        if failure == "duplicates":
+            _write_snapshot(path, [row, row], columns)
+        elif failure == "bad_values":
+            row["model_proj"] = "not-a-number"
+            _write_snapshot(path, [row], columns)
+
+    if failure == "unreadable":
+        original_open = Path.open
+
+        def fail_prediction_open(self, *args, **kwargs):
+            if self.resolve() == path.resolve():
+                raise PermissionError("test unreadable prediction file")
+            return original_open(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", fail_prediction_open)
+
+    class CaptureLogger:
+        def __init__(self):
+            self.warnings = []
+
+        def info(self, message):
+            pass
+
+        def warning(self, message):
+            self.warnings.append(message)
+
+    logger = CaptureLogger()
+    yahoo_df = pd.DataFrame([{"ID": 1, "Week 9": 12.0}])
+    config = {
+        "league_id": 123,
+        "use_model_sd": True,
+        "use_model_projections": True,
+    }
+
+    result, sd_by_player, info = _load_model_predictions_safely(
+        yahoo_df, config, 9, logger
+    )
+
+    assert result.equals(yahoo_df)
+    assert sd_by_player == {}
+    assert info["used_projections"] is False
+    assert info["used_sd"] is False
+    assert reason_fragment in info["failure_reason"]
+    assert logger.warnings
