@@ -138,6 +138,52 @@ def _position_sd_coverage(forecasts, actual_lookup):
     return coverage
 
 
+def _projection_age_metrics(forecasts, actual_lookup, max_age_hours):
+    eligible = {"actuals": [], "yahoo": [], "blend": []}
+    recent = {"actuals": [], "yahoo": [], "blend": []}
+    old_count = 0
+    unknown_age_count = 0
+    for week, week_forecasts in forecasts.items():
+        for player_id, forecast in week_forecasts.items():
+            actual = actual_lookup.get((player_id, week))
+            if (
+                actual is None
+                or actual["is_bye"]
+                or forecast["yahoo_proj"] <= 0
+            ):
+                continue
+            values = (
+                actual["value"],
+                forecast["yahoo_proj"],
+                forecast["model_proj"],
+            )
+            for key, value in zip(("actuals", "yahoo", "blend"), values):
+                eligible[key].append(value)
+
+            age = forecast.get("projection_age_hours")
+            if age is None:
+                unknown_age_count += 1
+            elif age > max_age_hours:
+                old_count += 1
+                continue
+            for key, value in zip(("actuals", "yahoo", "blend"), values):
+                recent[key].append(value)
+    return {
+        "all": {
+            "n": len(eligible["actuals"]),
+            "yahoo": compute_metrics(eligible["actuals"], eligible["yahoo"]),
+            "blend": compute_metrics(eligible["actuals"], eligible["blend"]),
+        },
+        "excluding_old": {
+            "n": len(recent["actuals"]),
+            "yahoo": compute_metrics(recent["actuals"], recent["yahoo"]),
+            "blend": compute_metrics(recent["actuals"], recent["blend"]),
+        },
+        "old_count": old_count,
+        "unknown_age_count": unknown_age_count,
+    }
+
+
 def _table_row(cells):
     return "| " + " | ".join(str(cell).replace("|", "\\|") for cell in cells) + " |"
 
@@ -250,6 +296,7 @@ def write_accuracy_report(
     minimum_improvement,
     minimum_weeks,
     forecast_error_sd_prior=None,
+    max_projection_age_hours=72,
 ):
     forecasts_before = forecast_walk_forward(store, league_id, max_week, position_sd)
     actual_rows = store.actuals(league_id)
@@ -290,6 +337,25 @@ def write_accuracy_report(
                 actuals.append(actual["value"])
                 predictions.append(value)
         overall[model] = compute_metrics(actuals, predictions)
+
+    projection_age = _projection_age_metrics(
+        forecasts, actual_lookup, max_projection_age_hours
+    )
+    age_all_beats_yahoo = (
+        projection_age["all"]["yahoo"]["mae"]
+        > projection_age["all"]["blend"]["mae"]
+        if projection_age["all"]["yahoo"]["mae"] is not None
+        and projection_age["all"]["blend"]["mae"] is not None
+        else False
+    )
+    age_filtered_beats_yahoo = (
+        projection_age["excluding_old"]["yahoo"]["mae"]
+        > projection_age["excluding_old"]["blend"]["mae"]
+        if projection_age["excluding_old"]["yahoo"]["mae"] is not None
+        and projection_age["excluding_old"]["blend"]["mae"] is not None
+        else False
+    )
+    age_conclusion_changed = age_all_beats_yahoo != age_filtered_beats_yahoo
 
     valid_weeks = [
         week
@@ -570,6 +636,49 @@ def write_accuracy_report(
     report_lines.extend(
         [
             "",
+            "## Projection-age sensitivity",
+            "",
+            f"Projection age is hours from the selected clean snapshot to that "
+            f"target week's kickoff. The stale threshold is {max_projection_age_hours:g} "
+            "hours; records with unknown age are retained and counted separately.",
+            "",
+            _table_row(
+                ("Population", "N", "Yahoo MAE", "Model MAE", "Model beats Yahoo")
+            ),
+            _table_row(("---", "---:", "---:", "---:", ":---:")),
+            _table_row(
+                (
+                    "All eligible projections",
+                    projection_age["all"]["n"],
+                    _format(projection_age["all"]["yahoo"]["mae"]),
+                    _format(projection_age["all"]["blend"]["mae"]),
+                    "yes" if age_all_beats_yahoo else "no",
+                )
+            ),
+            _table_row(
+                (
+                    f"Exclude age > {max_projection_age_hours:g} hours",
+                    projection_age["excluding_old"]["n"],
+                    _format(projection_age["excluding_old"]["yahoo"]["mae"]),
+                    _format(projection_age["excluding_old"]["blend"]["mae"]),
+                    "yes" if age_filtered_beats_yahoo else "no",
+                )
+            ),
+            "",
+            (
+                "The Yahoo-versus-model conclusion "
+                + ("changes" if age_conclusion_changed else "does not change")
+                + " when older projections are excluded. "
+                + f"{projection_age['old_count']} eligible player-week projections "
+                + f"are older than the threshold; "
+                + f"{projection_age['unknown_age_count']} have unknown age."
+            ),
+        ]
+    )
+
+    report_lines.extend(
+        [
+            "",
             "## Forecast-error SD priors by position",
             "",
             "Residuals are pooled from walk-forward blend forecasts and actuals, "
@@ -713,4 +822,6 @@ def write_accuracy_report(
         "beats_yahoo": beats_yahoo,
         "completed_weeks": len(valid_weeks),
         "forecast_error_sd_prior": prior_summary,
+        "projection_age": projection_age,
+        "projection_age_conclusion_changed": age_conclusion_changed,
     }

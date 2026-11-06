@@ -215,6 +215,7 @@ def forecast_walk_forward(
                 "position": position,
                 "target_week": target_week,
                 "snapshot_time": row["snapshot_time"],
+                "projection_age_hours": row.get("projection_age_hours"),
                 "yahoo_proj": yahoo,
                 "trailing_mean": trailing_value,
                 "ewma": ewma_value,

@@ -1,11 +1,15 @@
 import csv
 import logging
+from datetime import datetime
 
 import pandas as pd
 import pytest
 
 from analytics.integration import load_model_predictions
-from analytics.evaluate import _bye_rule_disagreements
+from analytics.evaluate import (
+    _bye_rule_disagreements,
+    _projection_age_metrics,
+)
 from analytics.models import (
     _error_sd,
     compute_metrics,
@@ -77,6 +81,12 @@ def test_ingest_is_idempotent_and_uses_clean_projection_for_byes(tmp_path):
     assert actuals["3"]["is_bye"] == 0
     assert actuals["3"]["value"] == 0
     assert actuals["1"]["engine_is_bye"] == 0
+    week_two_projection = store.clean_projections(123, 2)[0]
+    expected_age = (
+        datetime.fromisoformat(locks[2])
+        - datetime.fromisoformat(week_two_projection["snapshot_time"])
+    ).total_seconds() / 3600
+    assert week_two_projection["projection_age_hours"] == pytest.approx(expected_age)
     store.close()
 
 
@@ -129,6 +139,44 @@ def test_bye_rule_disagreements_include_only_rostered_mismatches():
     ]
 
     assert _bye_rule_disagreements(rows) == [rows[0]]
+
+
+def test_projection_age_sensitivity_excludes_old_and_counts_unknown_age():
+    forecasts = {
+        1: {
+            "recent": {
+                "yahoo_proj": 12.0,
+                "model_proj": 11.0,
+                "projection_age_hours": 24.0,
+            },
+            "old": {
+                "yahoo_proj": 12.0,
+                "model_proj": 1.0,
+                "projection_age_hours": 80.0,
+            },
+            "unknown": {
+                "yahoo_proj": 10.0,
+                "model_proj": 10.0,
+                "projection_age_hours": None,
+            },
+        }
+    }
+    actual_lookup = {
+        ("recent", 1): {"value": 10.0, "is_bye": 0},
+        ("old", 1): {"value": 10.0, "is_bye": 0},
+        ("unknown", 1): {"value": 10.0, "is_bye": 0},
+    }
+
+    metrics = _projection_age_metrics(forecasts, actual_lookup, 72)
+
+    assert metrics["all"]["n"] == 3
+    assert metrics["all"]["yahoo"]["mae"] == pytest.approx(4 / 3)
+    assert metrics["all"]["blend"]["mae"] == pytest.approx(10 / 3)
+    assert metrics["excluding_old"]["n"] == 2
+    assert metrics["excluding_old"]["yahoo"]["mae"] == pytest.approx(1.0)
+    assert metrics["excluding_old"]["blend"]["mae"] == pytest.approx(0.5)
+    assert metrics["old_count"] == 1
+    assert metrics["unknown_age_count"] == 1
 
 
 def test_walk_forward_forecast_does_not_read_target_or_future_actuals():

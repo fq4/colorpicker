@@ -125,6 +125,7 @@ def _evaluate_command(args, config, kickoff_times, store):
         config.get("model_projection_min_mae_improvement", 0.25),
         config.get("model_projection_min_weeks", 6),
         config.get("forecast_error_sd_prior", {}),
+        args.max_projection_age_hours,
     )
     yahoo_mae = result["overall"]["yahoo"]["mae"]
     blend_mae = result["overall"]["blend"]["mae"]
@@ -157,6 +158,7 @@ def _predict_command(args, config, store):
         config.get("model_projection_min_mae_improvement", 0.25),
         config.get("model_projection_min_weeks", 6),
         config.get("forecast_error_sd_prior", {}),
+        args.max_projection_age_hours,
     )
     path = (
         Path(args.output_dir)
@@ -201,11 +203,23 @@ def build_parser():
         "evaluate", help="Run the walk-forward accuracy evaluation."
     )
     evaluate_parser.add_argument("--week", type=int)
+    evaluate_parser.add_argument(
+        "--max-projection-age-hours",
+        type=float,
+        default=72,
+        help="Age threshold for the stale-projection sensitivity report (default: 72).",
+    )
 
     predict_parser = subparsers.add_parser(
         "predict", help="Write the optional forecast CSV for one target week."
     )
     predict_parser.add_argument("--week", type=int, required=True)
+    predict_parser.add_argument(
+        "--max-projection-age-hours",
+        type=float,
+        default=72,
+        help="Age threshold for the stale-projection sensitivity report (default: 72).",
+    )
     return parser
 
 
