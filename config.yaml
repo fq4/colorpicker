@@ -10,6 +10,12 @@ waiver_type: "continual_rolling"   # confirmed from league settings — not FAAB
 waiver_priority: 10   # update weekly as it changes
 season: 2026
 
+# Week 3 is a must-win after starting 0-2. In this mode, the action plan
+# refuses moves that lower this week's optimized lineup, and ignores tiny
+# bench-only ROS upgrades.
+must_win: true
+min_bench_move_ros_delta: 8.0
+
 # thresholds the decision engine uses — tune over time
 min_vor_gain_to_recommend_add:
   QB: 2.0
@@ -44,7 +50,9 @@ llm_evaluator:
   timeout_seconds: 60
 
 reasoning_engine:
-  enabled: false
+  # Evaluate every proposed add/drop against the optimized lineup and roster
+  # state. This is deterministic and advisory; it does not execute moves.
+  enabled: true
 
 # injury statuses that prevent a player from being used as bench depth
 # (true IR-slot eligibility only — "O" is a game-day designation, not IR)

@@ -196,6 +196,15 @@ class TestRankFreeAgents:
         assert len(elliss) == 1
         assert "flagged" in fa.columns
 
+    def test_missing_status_column_is_treated_as_uninjured(self, mock_df):
+        df = mock_df.drop(columns=["Status"])
+
+        fa = rank_free_agents(df, "RB", WEEK)
+
+        assert not fa.empty
+        assert fa["Status"].eq("").all()
+        assert fa["flagged"].eq("").all()
+
 
 # ── recommend_lineup ─────────────────────────────────────────────────────
 

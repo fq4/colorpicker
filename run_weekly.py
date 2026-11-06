@@ -80,6 +80,8 @@ def build_positions_config(config: dict) -> dict:
         "ir_statuses": config.get("ir_statuses", []),
         "min_usable_projection": config.get("min_usable_projection", 1.0),
         "locked_positions": config.get("locked_positions", []),
+        "must_win": config.get("must_win", False),
+        "min_bench_move_ros_delta": config.get("min_bench_move_ros_delta", 8.0),
     }
 
 

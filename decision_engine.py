@@ -534,6 +534,9 @@ def rank_free_agents(
         )
     ]
 
+    if "Status" not in pos_players.columns:
+        pos_players["Status"] = ""
+
     # Exclude hard-to-use injury statuses
     def _is_excluded(s):
         if pd.isna(s) or not s:
@@ -907,6 +910,17 @@ def recommend_adds_drops(
                     part for part in [rec.flag_reason, legality_reason] if part
                 )
 
+            # The transaction evaluator is authoritative for complete moves.
+            # Keep the legacy confidence field aligned with its result so the
+            # report cannot call a starter downgrade "high confidence".
+            rec.confidence = {
+                "MUST_DO": "high",
+                "STRONG": "high",
+                "LEAN": "medium",
+                "SPECULATIVE": "low",
+                "DO_NOT_MAKE": "low",
+            }.get(transaction_eval.confidence, rec.confidence)
+
         # --- Transparency: ffbot drop vs worst-VOR bench player (appended AFTER reason build) ---
         # ffbot's optimizer maximizes starting-lineup points, not VOR, so it may
         # choose to drop a mid-VOR bench player while a worse-VOR bench player
@@ -962,8 +976,25 @@ def recommend_adds_drops(
 
         recs.append(rec)
 
-    # Sort: non-flagged first by VOR gain descending, then flagged
-    recs.sort(key=lambda r: (r.flagged, -(r.vor_gain if r.vor_gain is not None else 0)))
+    # Rank complete transactions by their measured effect on the optimized
+    # lineup and roster, rather than by standalone VOR.  VOR remains a useful
+    # input and is still shown in the report, but it must not outrank a move
+    # that actually improves this team's legal starting lineup.
+    def _recommendation_sort_key(rec: AddDropRecommendation):
+        classification = rec.transaction_classification or ""
+        rejected = classification == "NO_MEANINGFUL_IMPROVEMENT"
+        if rec.current_week_delta is not None or rec.ros_delta is not None:
+            week_delta = rec.current_week_delta or 0.0
+            ros_delta = rec.ros_delta or 0.0
+            opportunity_cost = max(0.0, -(rec.ros_delta or 0.0))
+            score = week_delta * 2.0 + ros_delta / 10.0 - opportunity_cost
+        else:
+            # Pure adds cannot be evaluated as a complete transaction yet.
+            # Keep them ranked by the upstream optimizer's incremental value.
+            score = rec.vor_gain if rec.vor_gain is not None else 0.0
+        return (rec.flagged, rejected, -score)
+
+    recs.sort(key=_recommendation_sort_key)
 
     return recs
 
@@ -1391,6 +1422,36 @@ def build_action_plan(
     """
     moves = [r for r in add_drop_recs if not r.flagged]
     skipped = [r for r in add_drop_recs if r.flagged]
+
+    # In must-win mode, protect the current week's optimized lineup. A move
+    # that only improves the bench is allowed only when the ROS gain is large
+    # enough to justify spending the roster slot.
+    if positions_config.get("must_win"):
+        min_bench_ros = float(positions_config.get("min_bench_move_ros_delta", 8.0))
+        retained = []
+        for rec in moves:
+            week_delta = rec.current_week_delta
+            ros_delta = rec.ros_delta
+            reject_reason = None
+            if week_delta is not None and week_delta < -0.01:
+                reject_reason = (
+                    f"Must-win filter: lowers this week's optimized lineup by {week_delta:.1f}"
+                )
+            elif (
+                week_delta is not None
+                and abs(week_delta) <= 0.01
+                and ros_delta is not None
+                and ros_delta < min_bench_ros
+            ):
+                reject_reason = (
+                    f"Must-win filter: bench-only ROS gain {ros_delta:+.1f} "
+                    f"is below {min_bench_ros:.1f}"
+                )
+            if reject_reason:
+                skipped.append(replace(rec, flagged=True, flag_reason=reject_reason))
+            else:
+                retained.append(rec)
+        moves = retained
 
     logger.info(
         f"Action plan: {len(moves)} moves to make, "
